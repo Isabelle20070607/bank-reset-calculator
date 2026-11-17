@@ -29,6 +29,13 @@ def check(report_path):
     if abs(result['baseline']-50) > 1e-6 or abs(result['now']['served']-100) > 1e-6:
         raise RuntimeError('Release optimizer returned an unexpected result.')
     window.forecast_chart.set_result(result)
+    work_model = {'hourlyByThreeHours': [[1/24]*8 for _ in range(7)],
+                  'dailyRates': [1]*7, 'account': {'capturedAt': start,
+                  'remaining': 50, 'nextRefresh': start+7*86400, 'expiries': []}}
+    marginal = calculator.optimize(work_model, days=1)['marginal']
+    if not marginal['available'] or abs(marginal['totalGain']-1) > 1e-6:
+        raise RuntimeError('Release one-point return is incorrect.')
+    window.marginal_chart.set_marginal(marginal)
     window.weekly_chart.set_profiles([{'weekday': day, 'dailyRate': 10+day}
                                      for day in range(7)])
     window.resize(930, 790)
@@ -36,6 +43,10 @@ def check(report_path):
     app.processEvents()
     if window.grab().isNull():
         raise RuntimeError('Release window could not render.')
+    window.tabs.setCurrentIndex(1)
+    app.processEvents()
+    if window.grab().isNull():
+        raise RuntimeError('Release work-return chart could not render.')
     with tempfile.TemporaryDirectory() as folder:
         with sqlite3.connect(Path(folder)/'check.sqlite3') as database:
             database.execute('create table check_runtime (value integer)')
@@ -45,4 +56,4 @@ def check(report_path):
         database.close()
     window.close()
     Path(report_path).write_text(json.dumps({'ok': True, 'qt': True, 'sqlite': True,
-        'optimizer': True, 'node': calculator.node}, indent=2), encoding='utf-8')
+        'optimizer': True, 'marginal': True, 'node': calculator.node}, indent=2), encoding='utf-8')

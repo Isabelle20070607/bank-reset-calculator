@@ -70,6 +70,10 @@ def main():
         target.parent.mkdir(exist_ok=True)
         if not window.grab().save(str(target)):
             raise RuntimeError('Could not save README preview.')
+        window.tabs.setCurrentIndex(1)
+        app.processEvents()
+        if not window.grab().save(str(ROOT/'docs'/'work-return.png')):
+            raise RuntimeError('Could not save work-return preview.')
         window.quit()
 
 

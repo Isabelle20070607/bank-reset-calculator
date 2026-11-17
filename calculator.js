@@ -31,6 +31,7 @@
       return sums[lo] + (sums[hi] - sums[lo]) * (x - times[lo]) / (times[hi] - times[lo]);
     }
     function reaches(a, b, amount) {
+      if (amount <= EPS) return a;
       if (at(b) - at(a) < amount - EPS) return null;
       let lo = a, hi = b;
       for (let k = 0; k < 45; k++) {
@@ -86,6 +87,9 @@
     const demand = demandCurve(model, start, end, strength);
     const base = { time: start, remaining, refresh, served: 0, count: 0, waste: 0, prev: null, card: -1 };
     const grid = [start];
+    for (const time of options.candidateTimes ?? []) {
+      if (Number.isFinite(time) && time >= start && time < end - EPS) grid.push(time);
+    }
     for (let t = Math.ceil(start / HOUR) * HOUR; t < end - EPS; t += HOUR) {
       if (t > start + EPS) grid.push(t);
     }
@@ -167,5 +171,39 @@
       baseline: baseline.served, rows, events: trace(optimal.schedule).events,
       modelRates: model.dailyRates.map(x => x*strength), expiries };
   }
-  scope.BankResetCore = { demandCurve, segment, optimize, HOUR, WEEK };
+  function calculate(model, options = {}) {
+    const start = options.start ?? model.account.capturedAt;
+    const end = start + (options.days ?? 28)*24*HOUR;
+    const remaining = options.remaining ?? model.account.remaining;
+    const refresh = options.refresh ?? model.account.nextRefresh;
+    const unit = 1; // One percentage point of the full weekly allowance.
+    const comparable = Object.assign({}, options);
+    if (remaining >= unit) {
+      const demand = demandCurve(model, start, end, options.strength ?? 1);
+      const until = Math.min(end, refresh);
+      // Both counterfactuals use the same candidate times. A finer search on
+      // only one side would otherwise look like a benefit from using quota.
+      comparable.candidateTimes = (options.candidateTimes ?? []).concat(
+        [remaining, remaining-unit].map(cap => demand.reaches(start, until, cap)));
+    }
+    const result = optimize(model, comparable);
+    if (remaining < unit) {
+      result.marginal = { available: false, unit, reason: 'insufficientQuota' };
+      return result;
+    }
+    const after = optimize(model, Object.assign({}, comparable,
+      { remaining: remaining-unit, skipNow: true }));
+    const futureGain = after.optimal.served-result.optimal.served;
+    function summary(plan, usedNow) {
+      return { future: plan.served, total: plan.served+usedNow, count: plan.count,
+        firstReset: plan.schedule.length ? plan.schedule[0].time : null };
+    }
+    result.marginal = {
+      available: true, unit,
+      before: summary(result.optimal, 0), after: summary(after.optimal, unit),
+      futureGain, totalGain: unit+futureGain,
+    };
+    return result;
+  }
+  scope.BankResetCore = { demandCurve, segment, optimize, calculate, HOUR, WEEK };
 })(typeof globalThis === 'undefined' ? this : globalThis);

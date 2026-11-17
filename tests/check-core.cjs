@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 require('../calculator.js');
-const {optimize,demandCurve,segment,HOUR,WEEK}=BankResetCore;
+const {optimize,calculate,demandCurve,segment,HOUR,WEEK}=BankResetCore;
 const start=Date.UTC(2026,10,16)/1000;
 const model={hourlyByThreeHours:Array.from({length:7},()=>Array(8).fill(100/24)),dailyRates:Array(7).fill(100),
   account:{capturedAt:start,remaining:0,nextRefresh:start+12*HOUR,expiries:[start+10*24*HOUR]}};
@@ -32,3 +32,33 @@ assert(Math.abs(curve.total-28)<1e-6);
 const rollover=demandCurve(weekly,monday-HOUR,monday+HOUR,1);
 assert(Math.abs(rollover.total-8/24)<1e-6);
 console.log('Passed: seven distinct weekdays, Beijing midnight/Sunday wrap, weekly-clock changes, expiry, 18 consumption scenarios, and exhaustive two-reset comparison.');
+
+// A point consumed now is counted once, with future demand held unchanged.
+const allowance={hourlyByThreeHours:Array.from({length:7},()=>Array(8).fill(1/24)),
+  dailyRates:Array(7).fill(1),account:{capturedAt:start,remaining:90,nextRefresh:start+WEEK,expiries:[]}};
+const spare=calculate(allowance,{days:1});
+assert(Math.abs(spare.marginal.totalGain-1)<1e-6);
+assert(Math.abs(spare.marginal.futureGain)<1e-6);
+assert(Math.abs(spare.demand-1)<1e-6);
+const tight=calculate(allowance,{days:1,remaining:1});
+assert(tight.marginal.available);
+assert(Math.abs(tight.marginal.totalGain)<1e-6);
+assert(Math.abs(tight.marginal.futureGain+1)<1e-6);
+assert.equal(calculate(allowance,{remaining:.9}).marginal.available,false);
+const deadline={hourlyByThreeHours:Array.from({length:7},(_,day)=>Array(8).fill(day===0?0:100/24)),
+  dailyRates:[0,100,100,100,100,100,100],
+  account:{capturedAt:start,remaining:80.5,nextRefresh:start+WEEK,expiries:[start+2*HOUR]}};
+const unlocked=calculate(deadline,{days:3});
+assert.equal(unlocked.marginal.before.count,0);
+assert.equal(unlocked.marginal.after.count,1);
+assert(Math.abs(unlocked.marginal.totalGain-20.5)<1e-6);
+assert(Math.abs(unlocked.marginal.futureGain-19.5)<1e-6);
+for(const cap of [1,20,79.5,80,94,100]) {
+  const result=calculate(model,{remaining:cap,days:14});
+  const marginal=result.marginal;
+  assert(marginal.totalGain>=-1e-6);
+  assert(Math.abs(marginal.after.total-marginal.before.total-marginal.totalGain)<1e-6);
+  assert(Math.abs(marginal.futureGain+1-marginal.totalGain)<1e-6);
+  assert.equal(marginal.before.total,result.optimal.served);
+}
+console.log('Passed: one-point marginal return, unchanged future demand, no double count, zero gain under a binding quota, deadline unlock, insufficient quota, and shared-candidate comparisons.');
