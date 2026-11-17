@@ -82,6 +82,7 @@ class WorkReturnTests(unittest.TestCase):
         QTest.keyClick(chart, Qt.Key.Key_Home)
         self.assertEqual(chart.selected_usage, 0)
         self.assertEqual(self.window.marginal_value.text(), '净收益 0% 周限额')
+        self.assertFalse(self.window.marginal_details.isHidden())
         self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.28')
         QTest.keyClick(chart, Qt.Key.Key_Right)
         self.assertAlmostEqual(chart.selected_usage, 2.15, places=2)
@@ -145,15 +146,20 @@ class WorkReturnTests(unittest.TestCase):
         self.assertEqual(self.window.regular_total.text(), '—')
         self.assertEqual(self.window.allowance_surplus.text(), '—')
 
-    def test_sub_one_percent_quota_still_has_a_curve(self):
+    def test_no_visible_gain_hides_details_and_recovers_with_new_results(self):
         payload = copy.deepcopy(self.payload)
         payload['state']['model']['account']['remaining'] = .5
         payload['result'] = Calculator().optimize(payload['state']['model'])
         self.window.update_state(payload)
-        self.assertTrue(self.window.marginal_chart.curve['available'])
-        self.assertEqual(self.window.marginal_chart.curve['availableUsage'], .5)
-        self.assertEqual(self.window.marginal_chart.curve['maxUsage'], 0)
-        self.assertEqual(self.window.marginal_value.text(), '净收益 0% 周限额')
+        self.assertTrue(payload['result']['marginal']['available'])
+        self.assertTrue(self.window.marginal_details.isHidden())
+        self.assertIsNone(self.window.marginal_chart.curve)
+        self.assertEqual(self.window.marginal_value.text(), '暂无额外净收益')
+        self.assertEqual(self.window.marginal_table.rowCount(), 0)
+        self.assertNotIn('切换选点', self.window.marginal_note.text())
+        self.window.update_state(copy.deepcopy(self.payload))
+        self.assertFalse(self.window.marginal_details.isHidden())
+        self.assertIsNotNone(self.window.marginal_chart.curve)
         self.assertEqual(self.window.marginal_table.rowCount(), 3)
 
     def test_empty_quota_shows_unavailable_instead_of_old_curve(self):
@@ -162,7 +168,8 @@ class WorkReturnTests(unittest.TestCase):
         self.window.update_state(payload)
         self.assertEqual(self.window.marginal_value.text(), '当前额度已耗尽')
         self.assertEqual(self.window.marginal_table.rowCount(), 0)
-        self.assertFalse(self.window.marginal_chart.curve['available'])
+        self.assertIsNone(self.window.marginal_chart.curve)
+        self.assertTrue(self.window.marginal_details.isHidden())
 
     def test_strength_buttons_accept_mouse_clicks_and_update_preferences(self):
         self.window.show()

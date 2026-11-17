@@ -44,6 +44,7 @@ def check(report_path):
             abs(marginal['points'][1]['totalGain']-marginal['points'][1]['usage']) > 1e-6):
         raise RuntimeError('Release net-return curve is incorrect.')
     window.marginal_chart.set_curve(marginal)
+    window.marginal_details.show()
     window.weekly_chart.set_profiles([{'weekday': day, 'dailyRate': 10+day}
                                      for day in range(7)])
     window.resize(930, 790)

@@ -248,10 +248,17 @@ class Window(QMainWindow):
 
     def update_marginal(self, marginal, waiting='等待有效用量'):
         self.marginal_period.setText('未来 '+str(self.days.currentData())+' 天 · 额外用量与累计净收益')
-        self.marginal_chart.set_curve(marginal)
+        has_curve = bool(marginal and marginal['available'] and
+                         any(points(sample['totalGain']) != '0' for sample in marginal['points']))
+        self.marginal_details.setVisible(has_curve)
+        self.marginal_chart.set_curve(marginal if has_curve else None)
         if not marginal or not marginal['available']:
             self.marginal_value.setText(waiting if marginal is None else '当前额度已耗尽')
             self.marginal_note.setText('取得足够的用量记录和有效账户状态后自动计算。' if marginal is None else '额度刷新后，会自动恢复曲线。')
+            self.marginal_table.setRowCount(0)
+        elif not has_curve:
+            self.marginal_value.setText('暂无额外净收益')
+            self.marginal_note.setText('有可展示的收益区间时，会自动恢复曲线。')
             self.marginal_table.setRowCount(0)
 
     def show_marginal_point(self, sample):
