@@ -10,12 +10,17 @@
     const sums = [0];
     let t = start;
     while (t < end - EPS) {
+      const profile = model.switchAt != null && t >= model.switchAt ? model.normalAfter : model;
+      if (!profile) throw Object.assign(new Error('恢复常规模式后的样本不足，无法计算跨越该日期的规划。'+(model.switchError ?? '')),
+                                       { code: 'MISSING_NORMAL_PROFILE' });
       const local = new Date((t + 8 * HOUR) * 1000);
-      const slot = Math.floor(local.getUTCHours() / 3);
-      const day = (local.getUTCDay() + 6) % 7; // Monday = 0, matching Python datetime.weekday().
-      const boundary = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), (slot + 1) * 3) / 1000 - 8 * HOUR;
-      const next = Math.min(end, boundary);
-      const rate = model.hourlyByThreeHours[day][slot] * strength;
+      const slot = Math.floor(local.getUTCHours() / profile.slotHours);
+      const dayNumber = Math.floor((t+8*HOUR)/(24*HOUR));
+      // 1970-01-05 is Monday; the same fixed anchor is used by the fitter.
+      const day = ((dayNumber-4)%profile.cycleDays+profile.cycleDays)%profile.cycleDays;
+      const boundary = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), (slot + 1) * profile.slotHours) / 1000 - 8 * HOUR;
+      const next = Math.min(end, boundary, model.switchAt > t ? model.switchAt : end);
+      const rate = profile.hourlyRates[day][slot] * strength;
       sums.push(sums[sums.length - 1] + rate * (next - t) / HOUR);
       times.push(next);
       t = next;

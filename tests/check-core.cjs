@@ -2,7 +2,7 @@ const assert=require('node:assert/strict');
 require('../calculator.js');
 const {optimize,calculate,demandCurve,segment,HOUR,WEEK}=BankResetCore;
 const start=Date.UTC(2026,10,16)/1000;
-const model={hourlyByThreeHours:Array.from({length:7},()=>Array(8).fill(100/24)),dailyRates:Array(7).fill(100),
+const model={cycleDays:7,slotHours:3,hourlyRates:Array.from({length:7},()=>Array(8).fill(100/24)),dailyRates:Array(7).fill(100),
   account:{capturedAt:start,remaining:0,nextRefresh:start+12*HOUR,expiries:[start+10*24*HOUR]}};
 const changedClock=optimize(model,{days:1});
 assert(Math.abs(changedClock.baseline-50)<1e-6);
@@ -25,7 +25,7 @@ visit(0,start,0,start+40*HOUR,0);
 assert(Math.abs(optimize(small,{days:1}).optimal.served-best)<1e-6);
 // Monday-first Python profile indices must match Beijing dates, including Sunday wrap.
 const monday=Date.UTC(2026,10,15,16)/1000;
-const weekly={hourlyByThreeHours:Array.from({length:7},(_,day)=>Array(8).fill((day+1)/24))};
+const weekly={cycleDays:7,slotHours:3,hourlyRates:Array.from({length:7},(_,day)=>Array(8).fill((day+1)/24))};
 const curve=demandCurve(weekly,monday,monday+7*24*HOUR,1);
 for(let day=0;day<7;day++)assert(Math.abs(curve.at(monday+(day+1)*24*HOUR)-curve.at(monday+day*24*HOUR)-(day+1))<1e-6);
 assert(Math.abs(curve.total-28)<1e-6);
@@ -34,7 +34,7 @@ assert(Math.abs(rollover.total-8/24)<1e-6);
 console.log('Passed: seven distinct weekdays, Beijing midnight/Sunday wrap, weekly-clock changes, expiry, 18 consumption scenarios, and exhaustive two-reset comparison.');
 
 // Variable extra usage is counted once, with future demand held unchanged.
-const allowance={hourlyByThreeHours:Array.from({length:7},()=>Array(8).fill(1/24)),
+const allowance={cycleDays:7,slotHours:3,hourlyRates:Array.from({length:7},()=>Array(8).fill(1/24)),
   dailyRates:Array(7).fill(1),account:{capturedAt:start,remaining:90,nextRefresh:start+WEEK,expiries:[]}};
 const spare=calculate(allowance,{days:1,remaining:20});
 assert.equal(spare.marginal.availableUsage,20);
@@ -55,7 +55,7 @@ assert.equal(tight.marginal.maxUsage,0);
 assert.equal(tight.marginal.availableUsage,.5);
 assert.equal(tight.marginal.points[0].futureGain,0);
 assert.equal(calculate(allowance,{remaining:0}).marginal.available,false);
-const deadline={hourlyByThreeHours:Array.from({length:7},(_,day)=>Array(8).fill(day===0?0:100/24)),
+const deadline={cycleDays:7,slotHours:3,hourlyRates:Array.from({length:7},(_,day)=>Array(8).fill(day===0?0:100/24)),
   dailyRates:[0,100,100,100,100,100,100],
   account:{capturedAt:start,remaining:80.5,nextRefresh:start+WEEK,expiries:[start+2*HOUR]}};
 const unlocked=calculate(deadline,{days:3});
@@ -87,3 +87,18 @@ assert.equal(partial.marginal.limit,'futureZero');
 assert(Math.abs(partial.marginal.maxUsage-18.43)<.001);
 assert(Math.abs(partial.marginal.points.at(-1).futureGain)<1e-6);
 console.log('Passed: net-return curves ending at zero future change, fixed future demand, no double count, zero-gain plateaus, sub-one-percent quota, strict deadline unlock, and shared-candidate monotonicity.');
+
+const anchor=4*24*HOUR-8*HOUR; // Beijing Monday 1970-01-05.
+const fortnight={cycleDays:14,slotHours:3,hourlyRates:Array.from({length:14},(_,day)=>Array(8).fill((day+1)/24))};
+const twoWeeks=demandCurve(fortnight,anchor,anchor+15*24*HOUR,1);
+for(let day=0;day<15;day++) assert(Math.abs(twoWeeks.at(anchor+(day+1)*24*HOUR)-twoWeeks.at(anchor+day*24*HOUR)-(day%14+1))<1e-6);
+const holiday={cycleDays:1,slotHours:1,hourlyRates:[Array.from({length:24},(_,hour)=>hour+1)]};
+const dayCurve=demandCurve(holiday,monday,monday+25*HOUR,1);
+assert(Math.abs(dayCurve.at(monday+24*HOUR)-300)<1e-6);
+assert(Math.abs(dayCurve.total-301)<1e-6);
+const transition={cycleDays:1,slotHours:1,hourlyRates:[Array(24).fill(2)],switchAt:monday+6.5*HOUR,
+  normalAfter:{cycleDays:7,slotHours:3,hourlyRates:Array.from({length:7},()=>Array(8).fill(.5))}};
+assert(Math.abs(demandCurve(transition,monday,monday+24*HOUR,1).total-21.75)<1e-6);
+assert(Math.abs(demandCurve({...transition,normalAfter:null},monday,monday+6*HOUR,1).total-12)<1e-6);
+assert.throws(()=>demandCurve({...transition,normalAfter:null},monday,monday+7*HOUR,1),/恢复常规模式后的样本不足/);
+console.log('Passed: fourteen-day phases, hourly daily holiday repetition, and exact scheduled return across different slot sizes.');

@@ -36,13 +36,14 @@ class WorkReturnTests(unittest.TestCase):
         account = {'capturedAt': start, 'remaining': 50, 'nextRefresh': start+7*86400,
                    'availableCount': 0, 'credits': [], 'expiries': [],
                    'resetDetailsKnown': True, 'hasShortWindow': False}
-        model = {'account': account, 'hourlyByThreeHours': [[1/24]*8 for _ in range(7)],
-                 'dailyRates': [1]*7, 'weekdayProfiles': [{'weekday': day, 'dailyRate': 1,
+        model = {'account': account, 'mode': 'normal', 'cycleDays': 7, 'slotHours': 3,
+                 'hourlyRates': [[1/24]*8 for _ in range(7)],
+                 'dailyRates': [1]*7, 'profiles': [{'index': day, 'label': '周'+'一二三四五六日'[day], 'rate': 1,
                      'observedHours': 48} for day in range(7)], 'daily': [],
                  'periodStart': '2026-10-20', 'periodEnd': '2026-11-16', 'snapshotCount': 100}
         cls.payload = {'state': {'account': account, 'model': model, 'accountFresh': True,
                                 'accountUpdatedAt': start},
-                       'result': Calculator().optimize(model), 'error': None, 'settings': [28, 1]}
+                       'result': Calculator().optimize(model), 'error': None, 'settings': [28, 1, dict(desktop.DEFAULT_FIT)]}
 
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -96,7 +97,7 @@ class WorkReturnTests(unittest.TestCase):
             with self.subTest(days=days):
                 self.window.days.setCurrentIndex(index)
                 payload = copy.deepcopy(self.payload)
-                payload['settings'] = [days, 1]
+                payload['settings'] = [days, 1, dict(desktop.DEFAULT_FIT)]
                 payload['result'] = Calculator().optimize(payload['state']['model'], days)
                 self.window.update_state(payload)
                 self.assertEqual(self.window.period_total.text(), total+' 份')
@@ -106,7 +107,7 @@ class WorkReturnTests(unittest.TestCase):
     def test_reset_surplus_uses_complete_allowance_not_predicted_no_reset_usage(self):
         payload = copy.deepcopy(self.payload)
         model = payload['state']['model']
-        model['hourlyByThreeHours'] = [[100/24]*8 for _ in range(7)]
+        model['hourlyRates'] = [[100/24]*8 for _ in range(7)]
         model['dailyRates'] = [100]*7
         model['account']['expiries'] = [model['account']['capturedAt']+day*86400 for day in (10, 20)]
         payload['result'] = Calculator().optimize(model)
@@ -128,7 +129,7 @@ class WorkReturnTests(unittest.TestCase):
         self.assertEqual(self.window.marginal_value.text(), '正在重算…')
         self.assertEqual(self.window.allowance_surplus.text(), '—')
         offline = copy.deepcopy(self.payload)
-        offline['settings'] = [42, 1]
+        offline['settings'] = [42, 1, dict(desktop.DEFAULT_FIT)]
         offline['result'] = None
         offline['state']['accountFresh'] = False
         offline['state']['accountError'] = 'connection lost'
@@ -192,6 +193,49 @@ class WorkReturnTests(unittest.TestCase):
         self.assertTrue(self.window.increase_strength.isEnabled())
         QTest.mouseClick(self.window.increase_strength, Qt.MouseButton.LeftButton)
         self.assertAlmostEqual(self.window.strength.value(),.3)
+
+    def test_holiday_daily_controls_and_scheduled_return_restore_normal_cycle(self):
+        self.window.fit_cycle.setCurrentIndex(self.window.fit_cycle.findData(14))
+        self.window.usage_mode.setCurrentIndex(self.window.usage_mode.findData('holiday'))
+        self.assertEqual(self.window.fit_cycle.currentData(), 1)
+        self.assertFalse(self.window.fit_cycle.isEnabled())
+        self.assertEqual(self.window.slot_info.text(), '每小时')
+        self.window.update_state(copy.deepcopy(self.payload))
+        self.assertEqual(self.window.profiles.rowCount(), 0)
+        self.assertEqual(self.window.weekly_chart.profiles, [])
+        self.assertIn('小时', self.window.profiles.horizontalHeaderItem(1).text())
+        self.window.auto_return.setChecked(True)
+        until = self.window.fit_options()['returnAt']
+        self.assertIsNotNone(until)
+        offline = copy.deepcopy(self.payload)
+        offline['state']['model'] = None
+        offline['state']['modelError'] = '假期小时样本已覆盖 0/24 个时段'
+        offline['result'] = None
+        offline['settings'] = [28, 1, self.window.fit_options()]
+        self.window.update_state(offline)
+        self.assertEqual(self.window.profiles.rowCount(), 0)
+        self.assertEqual(self.window.weekly_chart.profiles, [])
+        with patch('desktop.time.time', return_value=until+1):
+            self.window.return_if_due()
+        self.assertEqual(self.window.usage_mode.currentData(), 'normal')
+        self.assertEqual(self.window.fit_cycle.currentData(), 14)
+        self.assertFalse(self.window.auto_return.isChecked())
+        saved = json.loads((Path(self.folder.name)/'preferences.json').read_text(encoding='utf-8'))
+        self.assertEqual(saved['mode'], 'normal')
+
+    def test_reopen_after_scheduled_date_does_not_reenter_holiday(self):
+        self.window.usage_mode.setCurrentIndex(self.window.usage_mode.findData('holiday'))
+        self.window.auto_return.setChecked(True)
+        until = self.window.fit_options()['returnAt']
+        with patch('desktop.time.time', return_value=until+1):
+            reopened = desktop.Window(self.app)
+        try:
+            self.assertEqual(reopened.usage_mode.currentData(), 'normal')
+            self.assertFalse(reopened.auto_return.isChecked())
+        finally:
+            reopened.closing = True
+            reopened.close()
+            reopened.deleteLater()
 
 
 if __name__ == '__main__':

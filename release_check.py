@@ -27,7 +27,7 @@ def check(report_path):
     if abs(window.strength.value()-1) > 1e-6:
         raise RuntimeError('Release decrease button is unavailable.')
     start = 1794787200
-    model = {'hourlyByThreeHours': [[100/24]*8 for _ in range(7)],
+    model = {'cycleDays': 7, 'slotHours': 3, 'hourlyRates': [[100/24]*8 for _ in range(7)],
              'dailyRates': [100]*7, 'account': {'capturedAt': start,
              'remaining': 0, 'nextRefresh': start+12*3600, 'expiries': [start+10*86400]}}
     calculator = Calculator()
@@ -35,7 +35,7 @@ def check(report_path):
     if abs(result['baseline']-50) > 1e-6 or abs(result['now']['served']-100) > 1e-6:
         raise RuntimeError('Release optimizer returned an unexpected result.')
     window.forecast_chart.set_result(result)
-    work_model = {'hourlyByThreeHours': [[1/24]*8 for _ in range(7)],
+    work_model = {'cycleDays': 7, 'slotHours': 3, 'hourlyRates': [[1/24]*8 for _ in range(7)],
                   'dailyRates': [1]*7, 'account': {'capturedAt': start,
                   'remaining': 50, 'nextRefresh': start+7*86400, 'expiries': []}}
     marginal = calculator.optimize(work_model, days=1)['marginal']
@@ -45,7 +45,7 @@ def check(report_path):
         raise RuntimeError('Release net-return curve is incorrect.')
     window.marginal_chart.set_curve(marginal)
     window.marginal_details.show()
-    window.weekly_chart.set_profiles([{'weekday': day, 'dailyRate': 10+day}
+    window.weekly_chart.set_profiles([{'index': day, 'label': '周'+'一二三四五六日'[day], 'rate': 10+day}
                                      for day in range(7)])
     window.resize(930, 790)
     window.show()

@@ -51,9 +51,15 @@ class Tracker:
         self.account_updated = None
         self.scan_stats = None
 
-    def poll(self):
+    def poll(self, fit_options=None):
         with self.lock:
             now = time.time()
+            fit_options = dict(fit_options or {'mode': 'normal', 'normalCycleDays': 7, 'returnAt': None})
+            mode = fit_options['mode']
+            return_at = fit_options['returnAt']
+            if mode == 'holiday' and return_at is not None and return_at <= now:
+                mode = 'normal'
+            self.store.set_mode(mode, return_at if mode == 'holiday' else None, now)
             account_error, history_error = None, None
             try:
                 result = self.client.read_limits()
@@ -71,15 +77,22 @@ class Tracker:
                 history_error = str(error) or type(error).__name__
                 logging.exception('History scan failed')
             plan = self.last_account.get('plan') if self.last_account else ''
-            model, model_error = self.store.fit(now, plan)
+            mode = 'normal' if mode == 'holiday' and return_at is not None and return_at <= now else mode
+            model, model_error = self.store.fit(now, plan, fit_options['normalCycleDays'], mode)
             account = dict(self.last_account) if self.last_account else None
             if model and account:
                 model['account'] = account
+                if mode == 'holiday' and return_at is not None:
+                    normal, normal_error = self.store.fit(now, plan, fit_options['normalCycleDays'], 'normal')
+                    model['switchAt'] = return_at
+                    model['normalAfter'] = normal
+                    model['switchError'] = normal_error
             self.state = {
                 'loading': False, 'accountFresh': account_error is None and account is not None,
                 'accountUpdatedAt': self.account_updated, 'checkedAt': now,
                 'accountError': account_error, 'historyError': history_error,
                 'modelError': model_error, 'model': model, 'account': account,
+                'mode': mode, 'fitOptions': fit_options,
                 'scan': self.scan_stats, 'refreshSeconds': self.interval,
                 'revision': self.state['revision']+1,
             }

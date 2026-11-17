@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QThread, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QDate, QSignalBlocker, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QSystemTrayIcon
@@ -20,8 +20,8 @@ from calculator import Calculator
 from tracker import RUNTIME, Tracker
 
 SERVER_NAME = 'bank-reset-calculator'
-WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 TZ = timezone(timedelta(hours=8))
+DEFAULT_FIT = {'mode': 'normal', 'normalCycleDays': 7, 'returnAt': None}
 
 
 def number(value):
@@ -44,18 +44,18 @@ class Collector(QThread):
     busy = Signal(bool)
     failed = Signal(str)
 
-    def __init__(self, days=28, strength=1, interval=30):
+    def __init__(self, days=28, strength=1, interval=30, fit_options=None):
         super().__init__()
         self.condition = threading.Condition()
-        self.settings = (days, strength)
+        self.settings = (days, strength, dict(fit_options or DEFAULT_FIT))
         self.interval = interval
         self.refresh_requested = True
         self.calculation_requested = True
         self.stopping = False
 
-    def request(self, days, strength, refresh=False):
+    def request(self, days, strength, refresh=False, fit_options=None):
         with self.condition:
-            self.settings = (days, strength)
+            self.settings = (days, strength, dict(fit_options or DEFAULT_FIT))
             self.refresh_requested |= refresh
             self.calculation_requested = True
             self.condition.notify()
@@ -69,22 +69,27 @@ class Collector(QThread):
         tracker, calculator = None, None
         try:
             tracker, calculator = Tracker(interval=self.interval), Calculator()
-            state, next_refresh = None, 0.
+            state, next_refresh, used_fit = None, 0., None
             while True:
                 with self.condition:
                     while not self.stopping and not self.calculation_requested and time.monotonic() < next_refresh:
                         self.condition.wait(next_refresh-time.monotonic())
                     if self.stopping:
                         break
-                    refresh = self.refresh_requested or time.monotonic() >= next_refresh
+                    wanted_fit = self.settings[2]
+                    refresh = self.refresh_requested or time.monotonic() >= next_refresh or wanted_fit != used_fit
                     self.refresh_requested = False
                     self.calculation_requested = False
                 self.busy.emit(True)
                 if refresh:
-                    state = tracker.poll()
+                    state = tracker.poll(wanted_fit)
+                    used_fit = wanted_fit
                     next_refresh = time.monotonic()+self.interval
                 with self.condition:
-                    days, strength = self.settings
+                    days, strength, fit_options = self.settings
+                    if fit_options != used_fit:
+                        self.calculation_requested = True
+                        continue
                     self.calculation_requested = False
                 result, error = None, None
                 if ready(state):
@@ -94,7 +99,7 @@ class Collector(QThread):
                         logging.exception('Calculation failed')
                         error = str(exception)
                 self.updated.emit({'state': state, 'result': result, 'error': error,
-                                   'settings': [days, strength]})
+                                   'settings': [days, strength, fit_options]})
                 self.busy.emit(False)
         except Exception as exception:
             logging.exception('Collector failed')
@@ -115,6 +120,7 @@ class Window(QMainWindow):
         self.app = app
         self.closing = False
         self.last_payload = None
+        self.normal_cycle_days = 7
         build_interface(self)
         self.marginal_chart.point_selected.connect(self.show_marginal_point)
 
@@ -134,13 +140,21 @@ class Window(QMainWindow):
             self.status.setToolTip('关闭窗口后在托盘继续采集；点击“退出”可停止。')
 
         self.restore_preferences()
-        self.worker = Collector(self.days.currentData(), self.strength.value())
+        self.worker = Collector(self.days.currentData(), self.strength.value(), 30, self.fit_options())
         self.worker.updated.connect(self.update_state)
         self.worker.busy.connect(lambda busy: self.refresh.setEnabled(not busy and not self.closing))
         self.worker.failed.connect(self.show_failure)
         self.worker.finished.connect(self.worker_finished)
         self.days.currentIndexChanged.connect(self.changed)
         self.strength.valueChanged.connect(self.changed)
+        self.usage_mode.currentIndexChanged.connect(self.mode_changed)
+        self.fit_cycle.currentIndexChanged.connect(self.cycle_changed)
+        self.auto_return.toggled.connect(self.return_changed)
+        self.return_date.dateChanged.connect(self.changed)
+        self.return_timer = QTimer(self)
+        self.return_timer.setInterval(30000)
+        self.return_timer.timeout.connect(self.return_if_due)
+        self.return_timer.start()
         self.worker.start()
 
     def restore_preferences(self):
@@ -153,13 +167,79 @@ class Window(QMainWindow):
                 self.days.setCurrentIndex(self.days.findData(settings['days']))
             if isinstance(settings.get('strength'), (int, float)) and .25 <= settings['strength'] <= 3:
                 self.strength.setValue(settings['strength'])
+            if settings.get('normalCycleDays') in (7, 14):
+                self.normal_cycle_days = settings['normalCycleDays']
+            mode = settings.get('mode', 'normal')
+            saved_date = QDate.fromString(settings.get('holidayReturnDate', ''), Qt.DateFormat.ISODate)
+            auto = bool(settings.get('autoReturn', False)) and mode == 'holiday' and saved_date.isValid()
+            expired = mode == 'holiday' and auto and saved_date.isValid() and self.date_timestamp(saved_date) <= time.time()
+            if expired:
+                mode, auto = 'normal', False
+            if saved_date.isValid() and not expired:
+                self.return_date.setDate(saved_date)
+            self.usage_mode.setCurrentIndex(self.usage_mode.findData('holiday' if mode == 'holiday' else 'normal'))
+            self.auto_return.setChecked(auto)
+            self.update_mode_controls()
+            if expired:
+                self.save_preferences()
         except (ValueError, OSError):
             logging.warning('Could not restore calculator preferences', exc_info=True)
 
-    def changed(self):
+    @staticmethod
+    def date_timestamp(value):
+        return datetime(value.year(), value.month(), value.day(), tzinfo=TZ).timestamp()
+
+    def fit_options(self):
+        return {'mode': self.usage_mode.currentData(), 'normalCycleDays': self.normal_cycle_days,
+                'returnAt': self.date_timestamp(self.return_date.date())
+                if self.usage_mode.currentData() == 'holiday' and self.auto_return.isChecked() else None}
+
+    def update_mode_controls(self):
+        holiday = self.usage_mode.currentData() == 'holiday'
+        with QSignalBlocker(self.fit_cycle):
+            self.fit_cycle.setCurrentIndex(self.fit_cycle.findData(1 if holiday else self.normal_cycle_days))
+        self.fit_cycle.setEnabled(not holiday)
+        self.slot_info.setText('每小时' if holiday else '每 3 小时')
+        self.auto_return.setEnabled(holiday)
+        self.return_date.setEnabled(holiday and self.auto_return.isChecked())
+        today = datetime.fromtimestamp(time.time(), TZ).date()
+        with QSignalBlocker(self.return_date):
+            self.return_date.setMinimumDate(QDate(today.year, today.month, today.day).addDays(1))
+
+    def mode_changed(self):
+        if self.usage_mode.currentData() == 'normal':
+            with QSignalBlocker(self.auto_return):
+                self.auto_return.setChecked(False)
+        self.update_mode_controls()
+        self.changed()
+
+    def cycle_changed(self):
+        if self.usage_mode.currentData() == 'normal':
+            self.normal_cycle_days = self.fit_cycle.currentData()
+        self.changed()
+
+    def return_changed(self):
+        self.update_mode_controls()
+        self.changed()
+
+    def return_if_due(self):
+        until = self.fit_options()['returnAt']
+        if until is not None and until <= time.time():
+            with QSignalBlocker(self.usage_mode), QSignalBlocker(self.auto_return):
+                self.usage_mode.setCurrentIndex(self.usage_mode.findData('normal'))
+                self.auto_return.setChecked(False)
+            self.update_mode_controls()
+            self.changed()
+
+    def save_preferences(self):
         RUNTIME.mkdir(exist_ok=True)
         (RUNTIME/'preferences.json').write_text(json.dumps({'days': self.days.currentData(),
-            'strength': self.strength.value()}), encoding='utf-8')
+            'strength': self.strength.value(), 'normalCycleDays': self.normal_cycle_days,
+            'mode': self.usage_mode.currentData(), 'autoReturn': self.auto_return.isChecked(),
+            'holidayReturnDate': self.return_date.date().toString(Qt.DateFormat.ISODate)}), encoding='utf-8')
+
+    def changed(self):
+        self.save_preferences()
         self.first.setText('正在重算…')
         self.update_totals(None)
         self.update_marginal(None, '正在重算…')
@@ -167,12 +247,16 @@ class Window(QMainWindow):
 
     def request(self, refresh=False):
         if not self.closing:
-            self.worker.request(self.days.currentData(), self.strength.value(), refresh)
+            self.worker.request(self.days.currentData(), self.strength.value(), refresh, self.fit_options())
 
     def update_state(self, payload):
         self.last_payload = payload
+        self.return_if_due()
         state = payload['state']
         account, model = state.get('account'), state.get('model')
+        same_fit = payload['settings'][2] == self.fit_options()
+        if not same_fit:
+            model = None
         if account:
             self.quota.setValue(round(account['remaining']*10))
             self.quota.setFormat(number(account['remaining'])+'%')
@@ -183,14 +267,26 @@ class Window(QMainWindow):
             if self.tray:
                 self.tray.setToolTip('Banked reset：周额度剩余 '+number(account['remaining'])+'%')
         if model:
-            self.weekly_chart.set_profiles(model['weekdayProfiles'])
-            fill_table(self.profiles, [[WEEKDAYS[p['weekday']], number(p['dailyRate']),
-                number(p['observedHours']/24)] for p in model['weekdayProfiles']])
+            holiday = model['mode'] == 'holiday'
+            unit = '小时' if holiday else '天'
+            self.weekly_chart.set_profiles(model['profiles'], unit)
+            self.profiles.setHorizontalHeaderLabels(['时段' if holiday else '周期位置', f'耗用估计（百分点/{unit}）', f'有效观测（{unit}）'])
+            fill_table(self.profiles, [[p['label'], number(p['rate']),
+                number(p['observedHours'] if holiday else p['observedHours']/24)] for p in model['profiles']])
             fill_table(self.history, [[d['day'], number(d['used']), number(d['observedHours'])] for d in model['daily']])
-            self.fit_info.setText(model['periodStart']+' 至 '+model['periodEnd']+' · '+str(model['snapshotCount'])+' 条快照 · 每周七天独立拟合')
+            kind = '假期 · 每天循环，每小时拟合' if holiday else ('常规 · 双周周期，A周起于 '+model['cycleStart'] if model['cycleDays'] == 14 else '常规 · 每周七天独立拟合')
+            self.fit_info.setText(model['periodStart']+' 至 '+model['periodEnd']+' · '+str(model['snapshotCount'])+' 条快照 · '+kind)
+        else:
+            self.weekly_chart.set_profiles([])
+            unit = '小时' if self.usage_mode.currentData() == 'holiday' else '天'
+            self.profiles.setHorizontalHeaderLabels(['时段' if unit == '小时' else '周期位置', f'耗用估计（百分点/{unit}）', f'有效观测（{unit}）'])
+            self.profiles.setRowCount(0)
+            self.history.setRowCount(0)
+            self.fit_info.setText(str((state.get('modelError') if same_fit else None) or '正在拟合当前模式的用量习惯…'))
         updated = state.get('accountUpdatedAt')
         self.status.setText(('已更新 ' if state.get('accountFresh') else '上次有效用量 ')+date(updated, True)+' · 每 30 秒采集' if updated else '尚未取得账户用量')
-        problem = payload.get('error') or state.get('accountError') or state.get('historyError') or state.get('modelError')
+        problem = ((payload.get('error') if payload['settings'] == [self.days.currentData(), self.strength.value(), self.fit_options()] else None)
+                   or state.get('accountError') or state.get('historyError') or (state.get('modelError') if same_fit else None))
         if not problem and account:
             if not account['resetDetailsKnown']:
                 problem = '尚未取得完整的重置到期信息，连接恢复后自动更新。'
@@ -200,7 +296,7 @@ class Window(QMainWindow):
                 problem = '等待账户返回新的额度窗口。'
         self.error.setVisible(bool(problem))
         self.error.setText(str(problem or ''))
-        if payload['settings'] != [self.days.currentData(), self.strength.value()]:
+        if payload['settings'] != [self.days.currentData(), self.strength.value(), self.fit_options()]:
             return
         result = payload.get('result')
         self.update_totals(result)
@@ -213,7 +309,11 @@ class Window(QMainWindow):
             self.comparison.clear()
             self.naturals.clear()
             self.plan.setRowCount(0)
-            self.update_marginal(None)
+            waiting = '等待有效用量'
+            if state.get('modelError'):
+                waiting = '正在积累假期样本' if self.usage_mode.currentData() == 'holiday' else (
+                    '双周样本尚未补齐' if self.normal_cycle_days == 14 else '常规样本尚未补齐')
+            self.update_marginal(None, waiting)
             return
         first = result['optimal']['schedule'][0] if result['optimal']['schedule'] else None
         self.first.setText(date(first['time']) if first else '暂不需要')

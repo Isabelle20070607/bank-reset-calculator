@@ -3,11 +3,11 @@ import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QDate, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QAbstractSpinBox, QComboBox, QDoubleSpinBox, QFrame,
-    QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QSizePolicy,
+    QAbstractItemView, QAbstractSpinBox, QCheckBox, QComboBox, QDateEdit, QDoubleSpinBox, QFrame,
+    QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -56,6 +56,17 @@ def panel(name):
     frame = QFrame()
     frame.setObjectName(name)
     return frame
+
+
+def scroll_page(widget):
+    area = QScrollArea()
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setWidgetResizable(True)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    area.setStyleSheet('QScrollArea { background: transparent; }')
+    area.viewport().setAutoFillBackground(False)
+    area.setWidget(widget)
+    return area
 
 
 def table(headers, name):
@@ -326,20 +337,21 @@ class MarginalChart(QWidget):
             p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 4, 4)
 
 
-class WeeklyChart(QWidget):
+class HabitChart(QWidget):
     def __init__(self, colors):
         super().__init__()
         self.colors = colors
         self.profiles = []
+        self.unit = '天'
         self.setMinimumHeight(150)
         self.setMaximumHeight(170)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setAccessibleName('周一到周日的日耗柱状图')
+        self.setAccessibleName('当前模式的使用习惯柱状图')
 
-    def set_profiles(self, profiles):
+    def set_profiles(self, profiles, unit='天'):
         self.profiles = profiles
-        self.setAccessibleDescription('；'.join('周%s %.2f 个百分点/天' %
-            ('一二三四五六日'[p['weekday']], p['dailyRate']) for p in profiles))
+        self.unit = unit
+        self.setAccessibleDescription('；'.join(f"{p['label']} {p['rate']:.2f} 个百分点/{unit}" for p in profiles))
         self.update()
 
     def paintEvent(self, event):
@@ -350,38 +362,42 @@ class WeeklyChart(QWidget):
         p.setFont(font)
         if not self.profiles:
             p.setPen(QColor(self.colors['muted']))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, '读取历史记录后显示每周节奏')
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, '样本充足后显示当前模式的用量习惯')
             return
         left, right, top, bottom = 36, 10, 47, 29
         w, h = self.width()-left-right, self.height()-top-bottom
-        maximum = max(10, math.ceil(max(r['dailyRate'] for r in self.profiles)/10)*10)
-        today = datetime.now(timezone(timedelta(hours=8))).weekday()
+        maximum = max(r['rate'] for r in self.profiles)
+        if maximum > 0:
+            step = 10**math.floor(math.log10(maximum))
+            maximum = math.ceil(maximum/step)*step
+        else:
+            maximum = 1
         p.setPen(QColor(self.colors['muted']))
-        p.drawText(left, 15, '日耗估计 / 周额度百分点')
-        p.drawText(QRectF(self.width()-120, 0, 110, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   '今天 · 周'+'一二三四五六日'[today])
+        p.drawText(left, 15, f'耗用估计 / 周额度百分点每{self.unit}')
         for tick in range(3):
             y = top+h*(1-tick/2)
             p.setPen(QPen(QColor(self.colors['border']), 1))
             p.drawLine(left, round(y), self.width()-right, round(y))
             p.setPen(QColor(self.colors['muted']))
             p.drawText(QRectF(0, y-8, left-8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       str(round(maximum*tick/2)))
+                       f'{maximum*tick/2:g}')
         for index, profile in enumerate(self.profiles):
-            x = left+w*(index+.5)/7
-            bar_w = min(48, w/7*.48)
-            bar_h = h*profile['dailyRate']/maximum
+            x = left+w*(index+.5)/len(self.profiles)
+            bar_w = min(48, w/len(self.profiles)*.48)
+            bar_h = h*profile['rate']/maximum
             color = QColor(self.colors['accent'])
-            color.setAlpha(230 if profile['weekday'] == today else 155)
+            color.setAlpha(190)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(color)
             p.drawRoundedRect(QRectF(x-bar_w/2, top+h-bar_h, bar_w, bar_h), 4, 4)
             p.setPen(QColor(self.colors['text']))
-            value = f"{profile['dailyRate']:.1f}".rstrip('0').rstrip('.')
-            p.drawText(QRectF(x-35, top+h-bar_h-23, 70, 20), Qt.AlignmentFlag.AlignCenter, value)
-            p.setPen(QColor(self.colors['accent'] if profile['weekday'] == today else self.colors['muted']))
-            p.drawText(QRectF(x-35, self.height()-24, 70, 20), Qt.AlignmentFlag.AlignCenter,
-                       '周'+'一二三四五六日'[profile['weekday']])
+            if len(self.profiles) <= 14:
+                value = f"{profile['rate']:.1f}".rstrip('0').rstrip('.')
+                p.drawText(QRectF(x-25, top+h-bar_h-23, 50, 20), Qt.AlignmentFlag.AlignCenter, value)
+            p.setPen(QColor(self.colors['muted']))
+            label = profile['label'].replace('周', '') if len(self.profiles) == 14 else profile['label']
+            if len(self.profiles) <= 14 or index % 3 == 0:
+                p.drawText(QRectF(x-24, self.height()-24, 48, 20), Qt.AlignmentFlag.AlignCenter, label)
 
 
 def build_interface(window):
@@ -408,12 +424,12 @@ def build_interface(window):
         }
         QPushButton { background: %(surface)s; border: 1px solid %(border)s; border-radius: 7px; padding: 7px 14px; }
         QPushButton:hover { background: %(soft)s; }
-        QPushButton:focus, QComboBox:focus, QDoubleSpinBox:focus { border: 1px solid %(accent)s; }
+        QPushButton:focus, QComboBox:focus, QDateEdit:focus, QDoubleSpinBox:focus { border: 1px solid %(accent)s; }
         QPushButton#refresh { background: %(button)s; color: %(button_text)s; border: 1px solid %(button)s; font-weight: 500; }
         QPushButton:disabled { color: %(muted)s; background: %(alternate)s; border-color: %(border)s; }
         QPushButton#refresh:disabled { color: %(muted)s; background: %(alternate)s; border-color: %(border)s; }
         QPushButton#strengthStep { padding: 0; font-size: 18px; }
-        QComboBox, QDoubleSpinBox { background: %(surface)s; border: 1px solid %(border)s; border-radius: 7px; padding: 5px 9px; min-height: 22px; }
+        QComboBox, QDateEdit, QDoubleSpinBox { background: %(surface)s; border: 1px solid %(border)s; border-radius: 7px; padding: 5px 9px; min-height: 22px; }
         QComboBox QAbstractItemView { background: %(surface)s; selection-background-color: %(soft)s; }
         QTabWidget::pane { border: none; margin-top: 10px; }
         QTabBar::tab { background: transparent; color: %(muted)s; border-radius: 7px; padding: 8px 18px; margin-right: 5px; }
@@ -511,6 +527,39 @@ def build_interface(window):
     controls.addStretch()
     layout.addLayout(controls)
 
+    modes = QHBoxLayout()
+    modes.setSpacing(8)
+    modes.addWidget(text('用量模式', 'caption'))
+    window.usage_mode = QComboBox()
+    window.usage_mode.addItem('常规', 'normal')
+    window.usage_mode.addItem('假期', 'holiday')
+    window.usage_mode.setAccessibleName('用量模式')
+    modes.addWidget(window.usage_mode)
+    modes.addWidget(text('拟合周期', 'caption'))
+    window.fit_cycle = QComboBox()
+    for label, period in [('每周', 7), ('双周', 14), ('每天', 1)]:
+        window.fit_cycle.addItem(label, period)
+    window.fit_cycle.model().item(2).setEnabled(False)
+    window.fit_cycle.setAccessibleName('习惯拟合周期')
+    modes.addWidget(window.fit_cycle)
+    window.slot_info = text('每 3 小时', 'caption')
+    modes.addWidget(window.slot_info)
+    modes.addStretch()
+    window.auto_return = QCheckBox('自动恢复常规')
+    window.auto_return.setEnabled(False)
+    modes.addWidget(window.auto_return)
+    window.return_date = QDateEdit()
+    window.return_date.setCalendarPopup(True)
+    window.return_date.setDisplayFormat('yyyy-MM-dd')
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    window.return_date.setMinimumDate(QDate(today.year, today.month, today.day).addDays(1))
+    window.return_date.setDate(QDate(today.year, today.month, today.day).addDays(7))
+    window.return_date.setEnabled(False)
+    window.return_date.setAccessibleName('恢复常规模式日期')
+    window.return_date.setToolTip('从该日北京时间 00:00 恢复常规；预测也会按该时点切换习惯。')
+    modes.addWidget(window.return_date)
+    layout.addLayout(modes)
+
     window.tabs = QTabWidget()
     window.tabs.setAccessibleName('计算器视图')
     plan = QWidget()
@@ -583,7 +632,7 @@ def build_interface(window):
     plan_layout.addLayout(middle, 1)
     window.comparison = text('', 'caption')
     plan_layout.addWidget(window.comparison)
-    window.tabs.addTab(plan, '重置建议')
+    window.tabs.addTab(scroll_page(plan), '重置建议')
 
     motivation = QWidget()
     motivation_layout = QVBoxLayout(motivation)
@@ -627,22 +676,22 @@ def build_interface(window):
     motivation_layout.addWidget(window.marginal_details, 1)
     window.marginal_details.hide()
     motivation_layout.addStretch()
-    window.tabs.addTab(motivation, '工作收益')
+    window.tabs.addTab(scroll_page(motivation), '工作收益')
 
     profile = QWidget()
     profile_layout = QVBoxLayout(profile)
     profile_layout.setContentsMargins(0, 0, 0, 0)
     profile_layout.setSpacing(8)
-    window.fit_info = text('周一到周日独立拟合，使用最近 28 天的记录。', 'caption')
+    window.fit_info = text('按当前模式单独拟合用量习惯。', 'caption')
     profile_layout.addWidget(window.fit_info)
-    window.weekly_chart = WeeklyChart(colors)
+    window.weekly_chart = HabitChart(colors)
     profile_layout.addWidget(window.weekly_chart, 1)
     window.profiles = table(['星期', '日耗估计（百分点）', '有效观测（天）'], 'profileTable')
     window.profiles.verticalHeader().setDefaultSectionSize(30)
-    window.profiles.setAccessibleName('每周七天用量')
+    window.profiles.setAccessibleName('当前模式各周期位置的用量')
     profile_layout.addWidget(window.profiles, 1)
     profile_layout.addWidget(text('有效观测天数由可观测小时折算；耗尽后的时段不计为低需求。', 'caption'))
-    window.tabs.addTab(profile, '每周习惯')
+    window.tabs.addTab(profile, '用量习惯')
 
     history = QWidget()
     history_layout = QVBoxLayout(history)
