@@ -39,9 +39,11 @@ def check(report_path):
                   'dailyRates': [1]*7, 'account': {'capturedAt': start,
                   'remaining': 50, 'nextRefresh': start+7*86400, 'expiries': []}}
     marginal = calculator.optimize(work_model, days=1)['marginal']
-    if not marginal['available'] or abs(marginal['totalGain']-1) > 1e-6:
-        raise RuntimeError('Release one-point return is incorrect.')
-    window.marginal_chart.set_marginal(marginal)
+    if (not marginal['available'] or marginal['points'][0]['usage'] != 0 or
+            abs(marginal['points'][-1]['usage']-49) > .001 or
+            abs(marginal['points'][1]['totalGain']-marginal['points'][1]['usage']) > 1e-6):
+        raise RuntimeError('Release net-return curve is incorrect.')
+    window.marginal_chart.set_curve(marginal)
     window.weekly_chart.set_profiles([{'weekday': day, 'dailyRate': 10+day}
                                      for day in range(7)])
     window.resize(930, 790)

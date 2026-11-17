@@ -116,6 +116,7 @@ class Window(QMainWindow):
         self.closing = False
         self.last_payload = None
         build_interface(self)
+        self.marginal_chart.point_selected.connect(self.show_marginal_point)
 
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -222,12 +223,12 @@ class Window(QMainWindow):
         met = 100*result['optimal']['served']/result['demand'] if result['demand'] else 100
         baseline = 100*result['baseline']/result['demand'] if result['demand'] else 100
         self.met.setText('需求覆盖 '+number(met)+'%；不重置 '+number(baseline)+'%')
-        now = result.get('now')
         marginal = result['marginal']
         if marginal['available']:
-            self.comparison.setText('现在用 1% 周限额 → 累计可用净增 '+points(marginal['totalGain'])+'% 周限额，详见「工作收益」。')
+            self.comparison.setText('现在额外使用 0–'+points(marginal['maxUsage'])+'% 周限额的净收益曲线，见「工作收益」。'
+                                    if marginal['maxUsage'] else '额外用量会减少后续可用量，显示范围止于 0%，见「工作收益」。')
         else:
-            self.comparison.setText('现在用与推荐安排的期内收益相近，可结合眼前任务决定。' if now and result['optimal']['served']-now['served'] < .01 else '已计入重置对自然刷新时间的影响；1 份等于一周满额。')
+            self.comparison.setText('当前周额度已耗尽，额度刷新后更新收益曲线。')
         self.update_marginal(marginal)
         fill_table(self.plan, [[date(step['time']), number(step['before'])+'%', date(step['expiry'])] for step in result['optimal']['schedule']])
         natural = [date(e['time']) for e in result['events'] if e['type'] == 'natural']
@@ -246,25 +247,20 @@ class Window(QMainWindow):
         self.allowance_surplus.setText(points(total-regular, signed=True)+' 份')
 
     def update_marginal(self, marginal, waiting='等待有效用量'):
-        self.marginal_period.setText('现在用掉周限额的 1% · 未来 '+str(self.days.currentData())+' 天累计可用量净增估算')
-        self.marginal_chart.set_marginal(marginal)
+        self.marginal_period.setText('未来 '+str(self.days.currentData())+' 天 · 额外用量与累计净收益')
+        self.marginal_chart.set_curve(marginal)
         if not marginal or not marginal['available']:
-            self.marginal_value.setText(waiting if marginal is None else '剩余不足 1%')
-            self.marginal_note.setText('取得足够的用量记录和有效账户状态后自动计算。' if marginal is None else '等额度刷新后，会自动恢复这一步的比较。')
+            self.marginal_value.setText(waiting if marginal is None else '当前额度已耗尽')
+            self.marginal_note.setText('取得足够的用量记录和有效账户状态后自动计算。' if marginal is None else '额度刷新后，会自动恢复曲线。')
             self.marginal_table.setRowCount(0)
-            return
-        self.marginal_value.setText('周限额的 '+points(marginal['totalGain'])+'%')
-        future = marginal['futureGain']
-        if abs(marginal['totalGain']) < 1e-6:
-            note = '这 1% 主要把未来的用量提前到现在；累计总量基本不变。'
-        elif future > 1e-6:
-            note = '现在完成 1%，后续预计还能多用 '+points(future)+'% 周限额。'
-        elif future < -1e-6:
-            note = '现在使用 1%，后续预计少用 '+points(-future)+'%；上方是计入两者后的净增。'
-        else:
-            note = '现在这 1% 预计能完整计入新增用量。'
-        self.marginal_note.setText(note)
-        before, after = marginal['before'], marginal['after']
+
+    def show_marginal_point(self, sample):
+        self.marginal_value.setText('净收益 '+points(sample['totalGain'], True)+'% 周限额')
+        self.marginal_note.setText('选中额外用量 '+points(sample['usage'])+'% · 后续可用量变化 '+
+                                   points(sample['futureGain'], True)+'% · 移动鼠标或按左右键切换选点'
+                                   if self.marginal_chart.curve['maxUsage'] else
+                                   '额外用量会减少后续可用量，显示范围止于 0%。')
+        before, after = self.marginal_chart.curve['before'], sample['after']
         reset_date = lambda value: date(value) if value is not None else '不需要'
         quantity = lambda value: f'{value/100:.4f}'.rstrip('0').rstrip('.')
         fill_table(self.marginal_table, [

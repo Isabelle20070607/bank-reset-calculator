@@ -95,7 +95,7 @@
     }
     // Exact current depletion and each deadline supplement the hourly grid.
     const depletion = demand.reaches(start, Math.min(end, refresh), remaining);
-    if (depletion !== null && depletion < end - EPS) grid.push(depletion);
+    if (!options.sharedCandidates && depletion !== null && depletion < end - EPS) grid.push(depletion);
     for (const expiry of expiries) if (expiry - HOUR > start && expiry - HOUR < end) grid.push(expiry - HOUR);
     const candidates = [...new Set(grid)].sort((a,b) => a-b);
 
@@ -176,33 +176,61 @@
     const end = start + (options.days ?? 28)*24*HOUR;
     const remaining = options.remaining ?? model.account.remaining;
     const refresh = options.refresh ?? model.account.nextRefresh;
-    const unit = 1; // One percentage point of the full weekly allowance.
+    const usages = remaining > EPS ? Array.from({length: 21}, (_, i) => remaining*i/20) : [];
+    if (remaining >= 80 && (options.expiries ?? model.account.expiries).some(expiry => expiry > start)) {
+      // Show both sides of the strict reset-eligibility boundary.
+      usages.push(remaining-80, Math.min(remaining, remaining-80+.01));
+    }
+    const samples = [...new Set(usages)].sort((a,b) => a-b);
     const comparable = Object.assign({}, options);
-    if (remaining >= unit) {
+    if (samples.length) {
       const demand = demandCurve(model, start, end, options.strength ?? 1);
       const until = Math.min(end, refresh);
-      // Both counterfactuals use the same candidate times. A finer search on
-      // only one side would otherwise look like a benefit from using quota.
+      // Every point, including the unchanged plan, uses the same search times.
       comparable.candidateTimes = (options.candidateTimes ?? []).concat(
-        [remaining, remaining-unit].map(cap => demand.reaches(start, until, cap)));
+        samples.map(used => demand.reaches(start, until, remaining-used)));
+      // Keep the same grid while locating the future-change zero crossing.
+      comparable.sharedCandidates = true;
     }
     const result = optimize(model, comparable);
-    if (remaining < unit) {
-      result.marginal = { available: false, unit, reason: 'insufficientQuota' };
+    if (!samples.length) {
+      result.marginal = { available: false, maxUsage: 0, points: [], reason: 'insufficientQuota' };
       return result;
     }
-    const after = optimize(model, Object.assign({}, comparable,
-      { remaining: remaining-unit, skipNow: true }));
-    const futureGain = after.optimal.served-result.optimal.served;
     function summary(plan, usedNow) {
       return { future: plan.served, total: plan.served+usedNow, count: plan.count,
         firstReset: plan.schedule.length ? plan.schedule[0].time : null };
     }
-    result.marginal = {
-      available: true, unit,
-      before: summary(result.optimal, 0), after: summary(after.optimal, unit),
-      futureGain, totalGain: unit+futureGain,
-    };
+    const before = summary(result.optimal, 0);
+    function score(usage) {
+      const plan = usage === 0 ? result : optimize(model, Object.assign({}, comparable,
+        { remaining: remaining-usage, skipNow: true }));
+      const futureGain = plan.optimal.served-before.future;
+      return { usage, after: summary(plan.optimal, usage), futureGain, totalGain: usage+futureGain };
+    }
+    let points = samples.map(score);
+    let last = 0;
+    points.forEach((point, index) => { if (point.futureGain >= -EPS) last = index; });
+    let limit = Math.abs(points[points.length-1].futureGain) <= EPS ? 'futureZero' : 'quota';
+    if (last < points.length-1) {
+      limit = 'futureZero';
+      let endpoint = points[last], high = points[last+1].usage;
+      while (high-endpoint.usage > .001) {
+        const trial = score((endpoint.usage+high)/2);
+        if (trial.futureGain >= -EPS) endpoint = trial;
+        else high = trial.usage;
+      }
+      points = points.slice(0, last+1);
+      if (endpoint.usage > points[last].usage+EPS) points.push(endpoint);
+      if (endpoint.usage > 0 && points.length < 21) {
+        const known = new Map(points.map(point => [point.usage, point]));
+        const visible = [...new Set(points.map(point => point.usage).concat(
+          Array.from({length: 19}, (_, i) => endpoint.usage*(i+1)/20)))].sort((a,b) => a-b);
+        points = visible.map(usage => known.get(usage) ?? score(usage));
+      }
+    }
+    result.marginal = { available: true, availableUsage: remaining,
+      maxUsage: points[points.length-1].usage, limit, before, points };
     return result;
   }
   scope.BankResetCore = { demandCurve, segment, optimize, calculate, HOUR, WEEK };

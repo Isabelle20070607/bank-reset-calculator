@@ -3,7 +3,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QAbstractSpinBox, QComboBox, QDoubleSpinBox, QFrame,
@@ -186,22 +186,76 @@ class ForecastChart(QWidget):
 
 
 class MarginalChart(QWidget):
+    point_selected = Signal(object)
+
     def __init__(self, colors):
         super().__init__()
         self.colors = colors
-        self.marginal = None
-        self.setMinimumHeight(130)
+        self.curve = None
+        self.selected_index = None
+        self.selected_usage = None
+        self.setMinimumHeight(150)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setAccessibleName('现在使用百分之一的收益拆分')
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName('净收益随额外用量变化的折线图')
 
-    def set_marginal(self, marginal):
-        self.marginal = marginal
-        self.setMinimumHeight(130 if marginal and marginal['available'] else 95)
-        description = ''
-        if marginal and marginal['available']:
-            description = f"现在使用1%，后续变化{points(marginal['futureGain'], True)}%，累计净增{points(marginal['totalGain'], True)}%；均为满周限额的百分比。"
-        self.setAccessibleDescription(description)
+    def set_curve(self, curve):
+        self.curve = curve
+        self.selected_index = None
+        self.setMinimumHeight(150 if curve and curve['available'] else 95)
+        if curve and curve['available']:
+            samples = curve['points']
+            if self.selected_usage is None:
+                index = max(range(len(samples)), key=lambda i: (round(samples[i]['totalGain'], 6), -samples[i]['usage']))
+            else:
+                index = min(range(len(samples)), key=lambda i: abs(samples[i]['usage']-self.selected_usage))
+            self.select_point(index)
+        else:
+            self.setAccessibleDescription('当前没有可比较的用量。')
         self.update()
+
+    def select_point(self, index):
+        if index == self.selected_index:
+            return
+        self.selected_index = index
+        sample = self.curve['points'][index]
+        self.selected_usage = sample['usage']
+        self.setAccessibleDescription('现在额外使用 '+points(sample['usage'])+'%，累计净收益 '+
+                                      points(sample['totalGain'], True)+'%；均为满周限额的比例。左右方向键可切换用量。')
+        self.point_selected.emit(sample)
+        self.update()
+
+    def plot_rect(self):
+        return QRectF(53, 32, self.width()-69, self.height()-82)
+
+    def select_at(self, position):
+        if not self.curve or not self.curve['available'] or not self.plot_rect().contains(position):
+            return
+        plot = self.plot_rect()
+        usage = (position.x()-plot.left())/plot.width()*self.curve['maxUsage']
+        self.select_point(min(range(len(self.curve['points'])),
+                              key=lambda i: abs(self.curve['points'][i]['usage']-usage)))
+
+    def mouseMoveEvent(self, event):
+        self.select_at(event.position())
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            self.select_at(event.position())
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.selected_index is not None:
+            last = len(self.curve['points'])-1
+            targets = {Qt.Key.Key_Left: max(0, self.selected_index-1),
+                       Qt.Key.Key_Right: min(last, self.selected_index+1),
+                       Qt.Key.Key_Home: 0, Qt.Key.Key_End: last}
+            if event.key() in targets:
+                self.select_point(targets[event.key()])
+                return
+        super().keyPressEvent(event)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -209,52 +263,67 @@ class MarginalChart(QWidget):
         font = QFont(self.font())
         font.setPixelSize(11)
         p.setFont(font)
-        data = self.marginal
+        data = self.curve
         if not data or not data['available']:
             p.setPen(QColor(self.colors['muted']))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       '剩余不足1%，暂无法比较' if data else '取得有效用量后显示收益拆分')
+                       '当前额度已耗尽，刷新后可比较' if data else '取得有效用量后显示收益曲线')
             return
-        unit, total = data['unit'], data['totalGain']
-        left, right, top, bottom = 44, 15, 36, 32
-        w, h = self.width()-left-right, self.height()-top-bottom
-        maximum = max(1., math.ceil(max(unit, total)*2)/2)
-        y = lambda value: top+h*(1-value/maximum)
+        plot = self.plot_rect()
+        maximum = max(sample['totalGain'] for sample in data['points'])
+        if maximum > 1e-6:
+            step = 10**math.floor(math.log10(maximum))/2
+            maximum = math.ceil(maximum/step)*step
+        else:
+            maximum = 1.
+        x = lambda value: plot.left()+plot.width()*value/data['maxUsage'] if data['maxUsage'] else plot.left()
+        y = lambda value: plot.bottom()-plot.height()*value/maximum
         p.setPen(QColor(self.colors['muted']))
-        p.drawText(left, 14, '均为满周限额的百分比')
+        p.drawText(round(plot.left()), 14, '累计净收益（周限额 %）')
+        p.drawText(QRectF(self.width()-133, 0, 117, 18), Qt.AlignmentFlag.AlignRight,
+                   '后续变化归零' if data['limit'] == 'futureZero' else '当前余额上限')
         for tick in range(3):
             value = maximum*tick/2
             level = y(value)
             p.setPen(QPen(QColor(self.colors['border']), 1))
-            p.drawLine(left, round(level), self.width()-right, round(level))
+            p.drawLine(round(plot.left()), round(level), round(plot.right()), round(level))
             p.setPen(QColor(self.colors['muted']))
-            p.drawText(QRectF(0, level-8, left-6, 16),
+            p.drawText(QRectF(0, level-8, plot.left()-7, 16),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, points(value)+'%')
-        spans = [(0, unit), (unit, total), (0, total)]
-        labels = ['现在使用', '后续变化', '累计净增']
-        values = [unit, data['futureGain'], total]
-        bar_w = min(58, w/3*.48)
-        centers = [left+w*(index+.5)/3 for index in range(3)]
+        for tick in range(5 if data['maxUsage'] else 1):
+            value = data['maxUsage']*tick/4
+            p.drawText(QRectF(x(value)-27, plot.bottom()+5, 54, 18),
+                       Qt.AlignmentFlag.AlignCenter, points(value)+'%')
+        p.drawText(QRectF(plot.left(), self.height()-21, plot.width(), 18),
+                   Qt.AlignmentFlag.AlignCenter, '现在额外用量（周限额 %）')
+        if not data['maxUsage']:
+            p.drawText(plot, Qt.AlignmentFlag.AlignCenter, '额外用量会减少后续可用量')
+        path = QPainterPath()
+        for index, sample in enumerate(data['points']):
+            px, py = x(sample['usage']), y(sample['totalGain'])
+            path.lineTo(px, py) if index else path.moveTo(px, py)
+        area = QPainterPath(path)
+        area.lineTo(x(data['maxUsage']), y(0))
+        area.lineTo(x(0), y(0))
+        area.closeSubpath()
+        tint = QColor(self.colors['accent'])
+        tint.setAlpha(24)
+        p.fillPath(area, tint)
+        pen = QPen(QColor(self.colors['accent']), 2.4)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.drawPath(path)
+        sample = data['points'][self.selected_index]
+        px, py = x(sample['usage']), y(sample['totalGain'])
         p.setPen(QPen(QColor(self.colors['muted']), 1, Qt.PenStyle.DashLine))
-        for index, level in ((0, unit), (1, total)):
-            p.drawLine(round(centers[index]+bar_w/2), round(y(level)),
-                       round(centers[index+1]-bar_w/2), round(y(level)))
-        for index, ((begin, end), label, value) in enumerate(zip(spans, labels, values)):
-            color = 'amber' if index == 1 and value < -1e-6 else ('success' if index == 1 else 'accent')
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(self.colors[color]))
-            high, low = y(max(begin, end)), y(min(begin, end))
-            if abs(begin-end) < 1e-6:
-                p.setPen(QPen(QColor(self.colors[color]), 2))
-                p.drawLine(round(centers[index]-bar_w/2), round(high), round(centers[index]+bar_w/2), round(high))
-            else:
-                p.drawRoundedRect(QRectF(centers[index]-bar_w/2, high, bar_w, max(1., low-high)), 4, 4)
-            p.setPen(QColor(self.colors['text']))
-            p.drawText(QRectF(centers[index]-70, high-22, 140, 20),
-                       Qt.AlignmentFlag.AlignCenter, points(value, True)+'%')
-            p.setPen(QColor(self.colors['muted']))
-            p.drawText(QRectF(centers[index]-60, self.height()-25, 120, 20),
-                       Qt.AlignmentFlag.AlignCenter, label)
+        p.drawLine(round(px), round(plot.top()), round(px), round(plot.bottom()))
+        p.setPen(QPen(QColor(self.colors['surface']), 2))
+        p.setBrush(QColor(self.colors['accent']))
+        p.drawEllipse(QRectF(px-4.5, py-4.5, 9, 9))
+        if self.hasFocus():
+            p.setPen(QPen(QColor(self.colors['accent']), 1, Qt.PenStyle.DotLine))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 4, 4)
 
 
 class WeeklyChart(QWidget):
@@ -524,7 +593,7 @@ def build_interface(window):
     motivation_summary = QVBoxLayout(motivation_hero)
     motivation_summary.setContentsMargins(18, 11, 18, 11)
     motivation_summary.setSpacing(4)
-    window.marginal_period = text('现在用掉周限额的 1% · 累计可用量净增估算', 'caption')
+    window.marginal_period = text('额外用量与累计净收益', 'caption')
     window.marginal_value = text('读取中…', 'marginalValue')
     window.marginal_note = text('固定后续用量习惯，比较使用前后的最优安排。', 'caption')
     motivation_summary.addWidget(window.marginal_period)
@@ -536,21 +605,21 @@ def build_interface(window):
     breakdown = panel('chartPanel')
     breakdown_layout = QVBoxLayout(breakdown)
     breakdown_layout.setContentsMargins(14, 12, 14, 10)
-    breakdown_layout.addWidget(text('这 1% 的收益拆分', 'section'))
+    breakdown_layout.addWidget(text('净收益随额外用量变化', 'section'))
     window.marginal_chart = MarginalChart(colors)
     breakdown_layout.addWidget(window.marginal_chart, 1)
     motivation_middle.addWidget(breakdown, 3)
     comparison = panel('planPanel')
     comparison_layout = QVBoxLayout(comparison)
     comparison_layout.setContentsMargins(12, 12, 12, 10)
-    comparison_layout.addWidget(text('前后安排对比', 'section'))
-    window.marginal_table = table(['对比', '维持当前', '现在用1%'], 'marginalTable')
-    window.marginal_table.setAccessibleName('使用周限额百分之一前后的计划比较')
+    comparison_layout.addWidget(text('选中用量的安排对比', 'section'))
+    window.marginal_table = table(['对比', '当前计划', '选中用量后'], 'marginalTable')
+    window.marginal_table.setAccessibleName('选中边际用量前后的计划比较')
     window.marginal_table.verticalHeader().setDefaultSectionSize(32)
     comparison_layout.addWidget(window.marginal_table, 1)
     motivation_middle.addWidget(comparison, 2)
     motivation_layout.addLayout(motivation_middle, 1)
-    motivation_layout.addWidget(text('计入现在这 1%，并分别采用最优重置安排。后续用量习惯固定，仅适用于当前这一步。', 'caption'))
+    motivation_layout.addWidget(text('净收益＝现在额外使用＋调整后的后续可用量−当前计划后续可用量。假设额外用量现在完成，未来习惯固定。', 'caption'))
     window.tabs.addTab(motivation, '工作收益')
 
     profile = QWidget()
