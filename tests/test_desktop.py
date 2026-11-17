@@ -1,4 +1,4 @@
-"""Native work-return states use synthetic data and no account integration."""
+"""Native totals and work-return states use synthetic data and no account integration."""
 import copy
 import json
 import os
@@ -69,12 +69,44 @@ class WorkReturnTests(unittest.TestCase):
         self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.29')
         self.assertEqual(self.window.marginal_chart.marginal['futureGain'], 0)
 
+    def test_totals_subtract_one_full_allowance_per_week(self):
+        for index, days, total, surplus in [(0, 14, '0.14', '-1.86'),
+                                            (1, 28, '0.28', '-3.72'),
+                                            (2, 42, '0.42', '-5.58')]:
+            with self.subTest(days=days):
+                self.window.days.setCurrentIndex(index)
+                payload = copy.deepcopy(self.payload)
+                payload['settings'] = [days, 1]
+                payload['result'] = Calculator().optimize(payload['state']['model'], days)
+                self.window.update_state(payload)
+                self.assertEqual(self.window.period_total.text(), total+' 份')
+                self.assertEqual(self.window.regular_total.text(), str(days//7)+' 份')
+                self.assertEqual(self.window.allowance_surplus.text(), surplus+' 份')
+
+    def test_reset_surplus_uses_complete_allowance_not_predicted_no_reset_usage(self):
+        payload = copy.deepcopy(self.payload)
+        model = payload['state']['model']
+        model['hourlyByThreeHours'] = [[100/24]*8 for _ in range(7)]
+        model['dailyRates'] = [100]*7
+        model['account']['expiries'] = [model['account']['capturedAt']+day*86400 for day in (10, 20)]
+        payload['result'] = Calculator().optimize(model)
+        self.window.update_state(payload)
+        self.assertEqual(self.window.period_total.text(), '5.5 份')
+        self.assertEqual(self.window.regular_total.text(), '4 份')
+        self.assertEqual(self.window.allowance_surplus.text(), '+1.5 份')
+        self.assertIn('多用 +2 份', self.window.gain.text())
+        self.assertEqual(payload['result']['baseline']/100, 3.5)
+
     def test_changing_period_and_losing_connection_clear_old_return(self):
         self.window.days.setCurrentIndex(2)
+        self.assertEqual(self.window.period_total.text(), '—')
+        self.assertEqual(self.window.regular_total.text(), '—')
+        self.assertEqual(self.window.allowance_surplus.text(), '—')
         self.assertEqual(self.window.marginal_value.text(), '正在重算…')
         self.assertIsNone(self.window.marginal_chart.marginal)
         self.window.update_state(copy.deepcopy(self.payload))
         self.assertEqual(self.window.marginal_value.text(), '正在重算…')
+        self.assertEqual(self.window.allowance_surplus.text(), '—')
         offline = copy.deepcopy(self.payload)
         offline['settings'] = [42, 1]
         offline['result'] = None
@@ -84,6 +116,15 @@ class WorkReturnTests(unittest.TestCase):
         self.assertIsNone(self.window.marginal_chart.marginal)
         self.assertEqual(self.window.marginal_table.rowCount(), 0)
         self.assertEqual(self.window.comparison.text(), '')
+        self.assertEqual(self.window.period_total.text(), '—')
+        self.assertEqual(self.window.regular_total.text(), '—')
+        self.assertEqual(self.window.allowance_surplus.text(), '—')
+
+    def test_collector_failure_clears_old_totals(self):
+        self.window.show_failure('collection stopped')
+        self.assertEqual(self.window.period_total.text(), '—')
+        self.assertEqual(self.window.regular_total.text(), '—')
+        self.assertEqual(self.window.allowance_surplus.text(), '—')
 
     def test_less_than_one_point_shows_unavailable_instead_of_old_gain(self):
         payload = copy.deepcopy(self.payload)
@@ -101,6 +142,7 @@ class WorkReturnTests(unittest.TestCase):
         settings=json.loads((Path(self.folder.name)/'preferences.json').read_text(encoding='utf-8'))
         self.assertAlmostEqual(settings['strength'],1.05)
         self.assertEqual(self.window.marginal_value.text(),'正在重算…')
+        self.assertEqual(self.window.allowance_surplus.text(), '—')
         QTest.mouseClick(self.window.decrease_strength, Qt.MouseButton.LeftButton)
         self.assertAlmostEqual(self.window.strength.value(),1)
         self.window.strength.setValue(self.window.strength.maximum())

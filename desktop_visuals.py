@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QAbstractSpinBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
+    QAbstractItemView, QAbstractSpinBox, QComboBox, QDoubleSpinBox, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QSizePolicy,
     QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
@@ -332,6 +332,7 @@ def build_interface(window):
         QLabel#firstValue { font-size: 25px; font-weight: 600; color: %(accent)s; }
         QLabel#marginalValue { font-size: 30px; font-weight: 600; color: %(accent)s; }
         QLabel#metricValue { font-size: 14px; font-weight: 500; }
+        QLabel#totalValue { font-size: 20px; font-weight: 600; }
         QLabel#section { font-size: 14px; font-weight: 600; }
         QFrame#accountPanel, QFrame#recommendationPanel, QFrame#chartPanel, QFrame#planPanel, QFrame#motivationPanel {
             background: %(surface)s; border: 1px solid %(border)s; border-radius: 12px;
@@ -458,11 +459,32 @@ def build_interface(window):
     window.first_note = text('正在连接用量并计算', 'caption')
     first.addWidget(window.first_note)
     summary.addLayout(first, 1)
-    metrics = QFormLayout()
-    metrics.setVerticalSpacing(9)
-    window.gain, window.met = text('—', 'metricValue'), text('—', 'metricValue')
-    metrics.addRow(text('额外可用', 'caption'), window.gain)
-    metrics.addRow(text('需求覆盖', 'caption'), window.met)
+    metrics = QVBoxLayout()
+    metrics.setSpacing(7)
+    totals = QHBoxLayout()
+    totals.setSpacing(16)
+    window.period_total = text('—', 'totalValue')
+    window.regular_total = text('—', 'totalValue')
+    window.allowance_surplus = text('—', 'totalValue')
+    for title, value in [('预计可用总量', window.period_total),
+                         ('常规完整周额度', window.regular_total),
+                         ('超出常规额度', window.allowance_surplus)]:
+        column = QVBoxLayout()
+        column.setSpacing(3)
+        column.addWidget(text(title, 'caption'))
+        value.setAccessibleName(title)
+        column.addWidget(value)
+        totals.addLayout(column, 1)
+    window.period_total.setToolTip('按当前工作强度和最优重置安排，规划期内预计实际能用的总量；1 份等于一周满额。')
+    window.regular_total.setToolTip('每 7 天按 1 份完整周额度计：14 / 28 / 42 天分别为 2 / 4 / 6 份。')
+    window.allowance_surplus.setToolTip('预计可用总量减去规划天数 ÷ 7；低于常规完整周额度时显示负值。')
+    metrics.addLayout(totals)
+    details = QHBoxLayout()
+    details.setSpacing(12)
+    window.gain, window.met = text('—', 'caption'), text('—', 'caption')
+    details.addWidget(window.gain, 1)
+    details.addWidget(window.met, 1)
+    metrics.addLayout(details)
     summary.addLayout(metrics, 2)
     plan_layout.addWidget(recommendation)
     middle = QHBoxLayout()

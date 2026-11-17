@@ -160,6 +160,7 @@ class Window(QMainWindow):
         (RUNTIME/'preferences.json').write_text(json.dumps({'days': self.days.currentData(),
             'strength': self.strength.value()}), encoding='utf-8')
         self.first.setText('正在重算…')
+        self.update_totals(None)
         self.update_marginal(None, '正在重算…')
         self.request()
 
@@ -201,6 +202,7 @@ class Window(QMainWindow):
         if payload['settings'] != [self.days.currentData(), self.strength.value()]:
             return
         result = payload.get('result')
+        self.update_totals(result)
         if result is None:
             self.first.setText('暂无法规划')
             self.first_note.setText('状态说明见下方提示')
@@ -216,10 +218,10 @@ class Window(QMainWindow):
         self.first.setText(date(first['time']) if first else '暂不需要')
         self.first_note.setText('届时预计剩余 '+number(first['before'])+'%' if first else '期内使用需求无需额外重置')
         self.forecast_chart.set_result(result)
-        self.gain.setText('+'+number((result['optimal']['served']-result['baseline'])/100)+' 份周额度 · 使用 '+str(result['optimal']['count'])+' 次')
+        self.gain.setText('相对不重置多用 '+points((result['optimal']['served']-result['baseline'])/100, signed=True)+' 份 · 重置 '+str(result['optimal']['count'])+' 次')
         met = 100*result['optimal']['served']/result['demand'] if result['demand'] else 100
         baseline = 100*result['baseline']/result['demand'] if result['demand'] else 100
-        self.met.setText(number(met)+'%；不使用重置为 '+number(baseline)+'%')
+        self.met.setText('需求覆盖 '+number(met)+'%；不重置 '+number(baseline)+'%')
         now = result.get('now')
         marginal = result['marginal']
         if marginal['available']:
@@ -230,6 +232,18 @@ class Window(QMainWindow):
         fill_table(self.plan, [[date(step['time']), number(step['before'])+'%', date(step['expiry'])] for step in result['optimal']['schedule']])
         natural = [date(e['time']) for e in result['events'] if e['type'] == 'natural']
         self.naturals.setText('本方案期内自然刷新：'+('、'.join(natural) if natural else '无'))
+
+    def update_totals(self, result):
+        if result is None:
+            self.period_total.setText('—')
+            self.regular_total.setText('—')
+            self.allowance_surplus.setText('—')
+            return
+        total = result['optimal']['served']/100
+        regular = self.days.currentData()/7
+        self.period_total.setText(points(total)+' 份')
+        self.regular_total.setText(number(regular)+' 份')
+        self.allowance_surplus.setText(points(total-regular, signed=True)+' 份')
 
     def update_marginal(self, marginal, waiting='等待有效用量'):
         self.marginal_period.setText('现在用掉周限额的 1% · 未来 '+str(self.days.currentData())+' 天累计可用量净增估算')
@@ -263,6 +277,7 @@ class Window(QMainWindow):
         self.error.setText(message)
         self.error.show()
         self.status.setText('采集已停止，请重新打开计算器。')
+        self.update_totals(None)
         self.update_marginal(None, '采集已停止')
 
     def show_window(self):
