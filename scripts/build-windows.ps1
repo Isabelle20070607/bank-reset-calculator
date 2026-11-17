@@ -1,7 +1,7 @@
 param(
     [string]$PythonExe = 'python',
     [string]$NodeExe = 'node',
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.2.0'
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.2.1'
 )
 $ErrorActionPreference = 'Stop'
 $PythonExe = (Get-Command $PythonExe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source

@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
+    QAbstractItemView, QAbstractSpinBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QSizePolicy,
     QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
@@ -342,6 +342,7 @@ def build_interface(window):
         QPushButton#refresh { background: %(button)s; color: %(button_text)s; border: 1px solid %(button)s; font-weight: 500; }
         QPushButton:disabled { color: %(muted)s; background: %(alternate)s; border-color: %(border)s; }
         QPushButton#refresh:disabled { color: %(muted)s; background: %(alternate)s; border-color: %(border)s; }
+        QPushButton#strengthStep { padding: 0; font-size: 18px; }
         QComboBox, QDoubleSpinBox { background: %(surface)s; border: 1px solid %(border)s; border-radius: 7px; padding: 5px 9px; min-height: 22px; }
         QComboBox QAbstractItemView { background: %(surface)s; selection-background-color: %(soft)s; }
         QTabWidget::pane { border: none; margin-top: 10px; }
@@ -416,8 +417,27 @@ def build_interface(window):
     window.strength.setDecimals(2)
     window.strength.setValue(1)
     window.strength.setSuffix(' 倍近期习惯')
+    window.strength.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
     window.strength.setAccessibleName('工作强度')
     controls.addWidget(window.strength)
+    window.decrease_strength = QPushButton('−')
+    window.increase_strength = QPushButton('+')
+    for button, label in ((window.decrease_strength, '减少工作强度'),
+                          (window.increase_strength, '增加工作强度')):
+        button.setObjectName('strengthStep')
+        button.setFixedSize(34, 34)
+        button.setAccessibleName(label)
+        button.setToolTip(label+'，每次 0.05 倍')
+        controls.addWidget(button)
+    window.decrease_strength.clicked.connect(window.strength.stepDown)
+    window.increase_strength.clicked.connect(window.strength.stepUp)
+
+    def update_strength_buttons(value):
+        window.decrease_strength.setEnabled(value > window.strength.minimum())
+        window.increase_strength.setEnabled(value < window.strength.maximum())
+
+    window.strength.valueChanged.connect(update_strength_buttons)
+    update_strength_buttons(window.strength.value())
     controls.addStretch()
     layout.addLayout(controls)
 

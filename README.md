@@ -24,7 +24,7 @@ Codex CLI 可按官方说明安装并运行 `codex login` 登录。若工具找�
 - 每 30 秒读取剩余周额度、可用 reset 数量及到期时间，自动拟合并更新建议。
 - 将周一至周日分别拟合，并细分到 3 小时时段，使用最近 28 天的历史。
 - 比较 14 / 28 / 42 天内的可用额度，展示建议使用时间和累计用量曲线。
-- 支持按近期习惯的 0.25–3 倍调整预计工作强度。
+- 支持按近期习惯的 0.25–3 倍调整预计工作强度，可直接输入或用「− / +」按钮每次调整 0.05 倍。
 - “工作收益”直接回答：现在消耗满周限额的 1%，规划期内累计可用量预计净增多少。
 - 跟随系统明暗配色，包含额度圆环、七天日耗柱状图及观测记录。
 
@@ -80,10 +80,10 @@ python -m venv .venv
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 node tests/check-core.cjs
 .venv\Scripts\python.exe -m pip install -r requirements-build.txt
-.\scripts\build-windows.ps1 -PythonExe .venv\Scripts\python.exe -Version 0.2.0
+.\scripts\build-windows.ps1 -PythonExe .venv\Scripts\python.exe -Version 0.2.1
 ```
 
-构建脚本将 Node.js、图标、计算代码及运行时许可证加入包中，执行不读取账户数据的发行包自检，然后生成 `dist/BankedReset-0.2.0-windows-x64.zip`。须在 Windows x64 的独立 CPython 环境中构建；默认使用 PATH 中的 Node.js，也可用 `-NodeExe` 指定。
+构建脚本将 Node.js、图标、计算代码及运行时许可证加入包中，执行不读取账户数据的发行包自检，然后生成 `dist/BankedReset-0.2.1-windows-x64.zip`。须在 Windows x64 的独立 CPython 环境中构建；默认使用 PATH 中的 Node.js，也可用 `-NodeExe` 指定。
 
 测试覆盖增量采集、七天独立拟合、额度耗尽及补充、连接失败、北京时间跨日、周刷新时间变化、到期边界、小规模穷举比较、1% 的净增拆分及过期结果清除。
 

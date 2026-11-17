@@ -1,5 +1,6 @@
 """Native work-return states use synthetic data and no account integration."""
 import copy
+import json
 import os
 import tempfile
 import unittest
@@ -7,7 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 import desktop
 from calculator import Calculator
@@ -90,6 +92,27 @@ class WorkReturnTests(unittest.TestCase):
         self.assertEqual(self.window.marginal_value.text(), '剩余不足 1%')
         self.assertEqual(self.window.marginal_table.rowCount(), 0)
         self.assertFalse(self.window.marginal_chart.marginal['available'])
+
+    def test_strength_buttons_accept_mouse_clicks_and_update_preferences(self):
+        self.window.show()
+        self.app.processEvents()
+        QTest.mouseClick(self.window.increase_strength, Qt.MouseButton.LeftButton)
+        self.assertAlmostEqual(self.window.strength.value(),1.05)
+        settings=json.loads((Path(self.folder.name)/'preferences.json').read_text(encoding='utf-8'))
+        self.assertAlmostEqual(settings['strength'],1.05)
+        self.assertEqual(self.window.marginal_value.text(),'正在重算…')
+        QTest.mouseClick(self.window.decrease_strength, Qt.MouseButton.LeftButton)
+        self.assertAlmostEqual(self.window.strength.value(),1)
+        self.window.strength.setValue(self.window.strength.maximum())
+        self.assertFalse(self.window.increase_strength.isEnabled())
+        self.assertTrue(self.window.decrease_strength.isEnabled())
+        QTest.mouseClick(self.window.decrease_strength, Qt.MouseButton.LeftButton)
+        self.assertAlmostEqual(self.window.strength.value(),2.95)
+        self.window.strength.setValue(self.window.strength.minimum())
+        self.assertFalse(self.window.decrease_strength.isEnabled())
+        self.assertTrue(self.window.increase_strength.isEnabled())
+        QTest.mouseClick(self.window.increase_strength, Qt.MouseButton.LeftButton)
+        self.assertAlmostEqual(self.window.strength.value(),.3)
 
 
 if __name__ == '__main__':

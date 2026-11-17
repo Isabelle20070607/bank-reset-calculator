@@ -20,6 +20,12 @@ def check(report_path):
     build_interface(window)
     if window.windowIcon().isNull():
         raise RuntimeError('Release icon is missing.')
+    window.increase_strength.click()
+    if abs(window.strength.value()-1.05) > 1e-6:
+        raise RuntimeError('Release increase button is unavailable.')
+    window.decrease_strength.click()
+    if abs(window.strength.value()-1) > 1e-6:
+        raise RuntimeError('Release decrease button is unavailable.')
     start = 1794787200
     model = {'hourlyByThreeHours': [[100/24]*8 for _ in range(7)],
              'dailyRates': [100]*7, 'account': {'capturedAt': start,
@@ -56,4 +62,5 @@ def check(report_path):
         database.close()
     window.close()
     Path(report_path).write_text(json.dumps({'ok': True, 'qt': True, 'sqlite': True,
-        'optimizer': True, 'marginal': True, 'node': calculator.node}, indent=2), encoding='utf-8')
+        'optimizer': True, 'marginal': True, 'strengthButtons': True,
+        'node': calculator.node}, indent=2), encoding='utf-8')
