@@ -74,7 +74,7 @@ Codex CLI 可按官方说明安装并运行 `codex login` 登录。若工具找�
 
 在“后续变化”持续为 0 的区间，净收益与额外用量一比一增加。归零后并不保证一直为 0，之后可能变负，净收益转为平台或改变斜率；截断只是显示范围。
 
-没有可展示的净收益时，只显示“暂无额外净收益”，隐藏空图和重复的前后对比；有可展示区间时自动恢复。
+如果截断后只剩原点，界面会说明现在多用预计会减少后续可用量，并隐藏空图。截断之后的净收益仍可能为正，因为现在多用的量可能超过后续少用的量。
 
 ![工作收益预览，使用虚构示例数据](docs/work-return.png)
 
@@ -108,10 +108,10 @@ python -m venv .venv
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 node tests/check-core.cjs
 .venv\Scripts\python.exe -m pip install -r requirements-build.txt
-.\scripts\build-windows.ps1 -PythonExe .venv\Scripts\python.exe -Version 0.4.0
+.\scripts\build-windows.ps1 -PythonExe .venv\Scripts\python.exe -Version 0.4.1
 ```
 
-构建脚本将 Node.js、图标、计算代码及运行时许可证加入包中，执行不读取账户数据的发行包自检，然后生成 `dist/BankedReset-0.4.0-windows-x64.zip`。须在 Windows x64 的独立 CPython 环境中构建；默认使用 PATH 中的 Node.js，也可用 `-NodeExe` 指定。
+构建脚本将 Node.js、图标、计算代码及运行时许可证加入包中，执行不读取账户数据的发行包自检，然后生成 `dist/BankedReset-0.4.1-windows-x64.zip`。须在 Windows x64 的独立 CPython 环境中构建；默认使用 PATH 中的 Node.js，也可用 `-NodeExe` 指定。
 
 测试覆盖增量采集、七天及双周独立拟合、假期小时模型与样本隔离、到期自动恢复、跨恢复日期的预测、额度耗尽及补充、连接失败、北京时间跨日、周刷新时间变化、到期边界、小规模穷举比较、净收益曲线、选点交互及过期结果清除。
 

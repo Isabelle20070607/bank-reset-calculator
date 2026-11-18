@@ -324,11 +324,6 @@ class Window(QMainWindow):
         baseline = 100*result['baseline']/result['demand'] if result['demand'] else 100
         self.met.setText('需求覆盖 '+number(met)+'%；不重置 '+number(baseline)+'%')
         marginal = result['marginal']
-        if marginal['available']:
-            self.comparison.setText('现在额外使用 0–'+points(marginal['maxUsage'])+'% 周限额的净收益曲线，见「工作收益」。'
-                                    if marginal['maxUsage'] else '额外用量会减少后续可用量，显示范围止于 0%，见「工作收益」。')
-        else:
-            self.comparison.setText('当前周额度已耗尽，额度刷新后更新收益曲线。')
         self.update_marginal(marginal)
         fill_table(self.plan, [[date(step['time']), number(step['before'])+'%', date(step['expiry'])] for step in result['optimal']['schedule']])
         natural = [date(e['time']) for e in result['events'] if e['type'] == 'natural']
@@ -350,15 +345,25 @@ class Window(QMainWindow):
         self.marginal_period.setText('未来 '+str(self.days.currentData())+' 天 · 额外用量与累计净收益')
         has_curve = bool(marginal and marginal['available'] and
                          any(points(sample['totalGain']) != '0' for sample in marginal['points']))
+        if has_curve:
+            self.comparison.setText('现在额外使用 0–'+points(marginal['maxUsage'])+'% 周限额的净收益曲线，见「工作收益」。')
         self.marginal_details.setVisible(has_curve)
         self.marginal_chart.set_curve(marginal if has_curve else None)
         if not marginal or not marginal['available']:
+            self.comparison.setText('当前周额度已耗尽，额度刷新后更新收益曲线。' if marginal else '')
             self.marginal_value.setText(waiting if marginal is None else '当前额度已耗尽')
             self.marginal_note.setText('取得足够的用量记录和有效账户状态后自动计算。' if marginal is None else '额度刷新后，会自动恢复曲线。')
             self.marginal_table.setRowCount(0)
         elif not has_curve:
-            self.marginal_value.setText('暂无额外净收益')
-            self.marginal_note.setText('有可展示的收益区间时，会自动恢复曲线。')
+            if marginal['maxUsage'] == 0:
+                title = '现在多用，预计会减少后续可用量'
+                note = '曲线画到后续可用量变化归零为止，这次只剩额外用量为 0% 的起点。'
+            else:
+                title = '图示范围内的净收益约为 0%'
+                note = '本次估算的额外用量范围为 0–'+points(marginal['maxUsage'])+'% 周限额。'
+            self.marginal_value.setText(title)
+            self.marginal_note.setText(note)
+            self.comparison.setText(title+'。')
             self.marginal_table.setRowCount(0)
 
     def show_marginal_point(self, sample):
