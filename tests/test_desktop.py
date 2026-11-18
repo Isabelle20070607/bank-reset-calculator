@@ -68,27 +68,27 @@ class WorkReturnTests(unittest.TestCase):
         self.window.show()
         self.app.processEvents()
         chart = self.window.marginal_chart
-        self.assertIn('0–43%', self.window.comparison.text())
+        self.assertIn('0–50%', self.window.comparison.text())
         self.assertEqual(chart.curve['points'][0]['usage'], 0)
-        self.assertAlmostEqual(chart.curve['points'][-1]['usage'], 43, places=2)
+        self.assertAlmostEqual(chart.curve['points'][-1]['usage'], 50, places=2)
         plot = chart.plot_rect()
         target = plot.center()
         target.setX(plot.right()-1)
         QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=target.toPoint())
-        self.assertAlmostEqual(chart.selected_usage, 43, places=2)
+        self.assertAlmostEqual(chart.selected_usage, 50, places=2)
         self.assertEqual(self.window.marginal_value.text(), '净收益 +43% 周限额')
         self.assertEqual(self.window.marginal_table.item(0, 1).text(), '0.28')
         self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.71')
-        self.assertAlmostEqual(chart.curve['points'][-1]['futureGain'], 0)
+        self.assertAlmostEqual(chart.curve['points'][-1]['futureGain'], -7)
         QTest.keyClick(chart, Qt.Key.Key_Home)
         self.assertEqual(chart.selected_usage, 0)
         self.assertEqual(self.window.marginal_value.text(), '净收益 0% 周限额')
         self.assertFalse(self.window.marginal_details.isHidden())
         self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.28')
         QTest.keyClick(chart, Qt.Key.Key_Right)
-        self.assertAlmostEqual(chart.selected_usage, 2.15, places=2)
-        self.assertEqual(self.window.marginal_value.text(), '净收益 +2.15% 周限额')
-        self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.3015')
+        self.assertAlmostEqual(chart.selected_usage, 2.5, places=2)
+        self.assertEqual(self.window.marginal_value.text(), '净收益 +2.5% 周限额')
+        self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.305')
 
     def test_totals_subtract_one_full_allowance_per_week(self):
         for index, days, total, surplus in [(0, 14, '0.14', '-1.86'),
@@ -155,15 +155,33 @@ class WorkReturnTests(unittest.TestCase):
         self.assertTrue(payload['result']['marginal']['available'])
         self.assertTrue(self.window.marginal_details.isHidden())
         self.assertIsNone(self.window.marginal_chart.curve)
-        self.assertEqual(self.window.marginal_value.text(), '现在多用，预计会减少后续可用量')
-        self.assertIn('只剩额外用量为 0% 的起点', self.window.marginal_note.text())
-        self.assertEqual(self.window.comparison.text(), self.window.marginal_value.text()+'。')
+        self.assertEqual(self.window.marginal_value.text(), '预计 28 天总用量持平')
+        self.assertIn('现在多用 0.5%，之后少用 0.5%', self.window.marginal_note.text())
+        self.assertIn('如果现在用完余额', self.window.comparison.text())
         self.assertEqual(self.window.marginal_table.rowCount(), 0)
         self.assertNotIn('切换选点', self.window.marginal_note.text())
         self.window.update_state(copy.deepcopy(self.payload))
         self.assertFalse(self.window.marginal_details.isHidden())
         self.assertIsNotNone(self.window.marginal_chart.curve)
         self.assertEqual(self.window.marginal_table.rowCount(), 3)
+
+    def test_break_even_range_is_visible_until_extra_usage_no_longer_displaces_future_usage(self):
+        self.window.days.setCurrentIndex(0)
+        payload = copy.deepcopy(self.payload)
+        model = payload['state']['model']
+        start = model['account']['capturedAt']
+        model['hourlyRates'] = [[25/24]*8 for _ in range(7)]
+        model['dailyRates'] = [25]*7
+        model['account'].update(nextRefresh=start+4*86400, expiries=[start+3600], availableCount=1)
+        payload['settings'][0] = 14
+        payload['result'] = Calculator().optimize(model, 14)
+        self.window.update_state(payload)
+        curve = self.window.marginal_chart.curve
+        self.assertFalse(self.window.marginal_details.isHidden())
+        self.assertAlmostEqual(curve['maxUsage'], 25, places=5)
+        self.assertEqual(self.window.marginal_value.text(), '净收益 0% 周限额')
+        self.assertIn('超过 25% 后', self.window.marginal_note.text())
+        self.assertEqual(curve['fullBalance']['totalGain'], 25)
 
     def test_empty_quota_shows_unavailable_instead_of_old_curve(self):
         payload = copy.deepcopy(self.payload)

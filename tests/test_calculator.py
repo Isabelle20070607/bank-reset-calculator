@@ -35,10 +35,10 @@ class CalculatorTests(unittest.TestCase):
         result=Calculator().optimize(model,days=1)
         marginal=result['marginal']
         self.assertEqual(marginal['availableUsage'],50)
-        self.assertAlmostEqual(marginal['maxUsage'],49,places=2)
+        self.assertAlmostEqual(marginal['maxUsage'],50,places=2)
         self.assertEqual(marginal['points'][0]['usage'],0)
-        self.assertAlmostEqual(marginal['points'][-1]['usage'],49,places=2)
-        self.assertAlmostEqual(marginal['points'][-1]['futureGain'],0)
+        self.assertAlmostEqual(marginal['points'][-1]['usage'],50,places=2)
+        self.assertAlmostEqual(marginal['points'][-1]['futureGain'],-1)
         sample=next(point for point in marginal['points'] if point['usage']==5)
         self.assertAlmostEqual(sample['totalGain'],5)
         self.assertAlmostEqual(marginal['before']['total'],1)

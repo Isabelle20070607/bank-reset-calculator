@@ -218,7 +218,8 @@ class MarginalChart(QWidget):
         if curve and curve['available']:
             samples = curve['points']
             if self.selected_usage is None:
-                index = max(range(len(samples)), key=lambda i: (round(samples[i]['totalGain'], 6), -samples[i]['usage']))
+                index = len(samples)-1 if curve['limit'] == 'linearTail' else max(
+                    range(len(samples)), key=lambda i: (round(samples[i]['totalGain'], 6), -samples[i]['usage']))
             else:
                 index = min(range(len(samples)), key=lambda i: abs(samples[i]['usage']-self.selected_usage))
             self.select_point(index)
@@ -292,7 +293,7 @@ class MarginalChart(QWidget):
         p.setPen(QColor(self.colors['muted']))
         p.drawText(round(plot.left()), 14, '累计净收益（周限额 %）')
         p.drawText(QRectF(self.width()-133, 0, 117, 18), Qt.AlignmentFlag.AlignRight,
-                   '后续变化归零' if data['limit'] == 'futureZero' else '当前余额上限')
+                   '此后总用量等量增加' if data['limit'] == 'linearTail' else '当前余额上限')
         for tick in range(3):
             value = maximum*tick/2
             level = y(value)
@@ -307,8 +308,6 @@ class MarginalChart(QWidget):
                        Qt.AlignmentFlag.AlignCenter, points(value)+'%')
         p.drawText(QRectF(plot.left(), self.height()-21, plot.width(), 18),
                    Qt.AlignmentFlag.AlignCenter, '现在额外用量（周限额 %）')
-        if not data['maxUsage']:
-            p.drawText(plot, Qt.AlignmentFlag.AlignCenter, '额外用量会减少后续可用量')
         path = QPainterPath()
         for index, sample in enumerate(data['points']):
             px, py = x(sample['usage']), y(sample['totalGain'])

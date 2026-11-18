@@ -38,11 +38,11 @@ const allowance={cycleDays:7,slotHours:3,hourlyRates:Array.from({length:7},()=>A
   dailyRates:Array(7).fill(1),account:{capturedAt:start,remaining:90,nextRefresh:start+WEEK,expiries:[]}};
 const spare=calculate(allowance,{days:1,remaining:20});
 assert.equal(spare.marginal.availableUsage,20);
-assert.equal(spare.marginal.maxUsage,19);
+assert.equal(spare.marginal.maxUsage,20);
 assert.equal(spare.marginal.points[0].usage,0);
-assert.equal(spare.marginal.points.at(-1).usage,19);
-assert.equal(spare.marginal.limit,'futureZero');
-assert(Math.abs(spare.marginal.points.at(-1).futureGain)<1e-6);
+assert.equal(spare.marginal.points.at(-1).usage,20);
+assert.equal(spare.marginal.limit,'quota');
+assert(Math.abs(spare.marginal.points.at(-1).futureGain+1)<1e-6);
 const five=spare.marginal.points.find(point=>point.usage===5);
 assert(Math.abs(five.totalGain-5)<1e-6);
 assert(Math.abs(five.futureGain)<1e-6);
@@ -51,7 +51,7 @@ assert(Math.abs(spare.demand-1)<1e-6);
 const tight=calculate(allowance,{days:1,remaining:.5});
 assert(tight.marginal.available);
 assert(tight.marginal.points.every(point=>Math.abs(point.totalGain)<1e-6));
-assert.equal(tight.marginal.maxUsage,0);
+assert.equal(tight.marginal.maxUsage,.5);
 assert.equal(tight.marginal.availableUsage,.5);
 assert.equal(tight.marginal.points[0].futureGain,0);
 assert.equal(calculate(allowance,{remaining:0}).marginal.available,false);
@@ -60,13 +60,14 @@ const deadline={cycleDays:7,slotHours:3,hourlyRates:Array.from({length:7},(_,day
   account:{capturedAt:start,remaining:80.5,nextRefresh:start+WEEK,expiries:[start+2*HOUR]}};
 const unlocked=calculate(deadline,{days:3});
 assert.equal(unlocked.marginal.before.count,0);
-assert.equal(unlocked.marginal.limit,'quota');
+assert.equal(unlocked.marginal.limit,'linearTail');
+assert(Math.abs(unlocked.marginal.maxUsage-.5)<1e-6);
 const boundary=unlocked.marginal.points.find(point=>point.usage===.5);
-const unlockedPoint=unlocked.marginal.points.find(point=>point.usage===.51);
+const unlockedPoint=unlocked.marginal.points.at(-1);
 assert.equal(boundary.after.count,0);
 assert.equal(unlockedPoint.after.count,1);
 assert(Math.abs(boundary.totalGain)<1e-6);
-assert(Math.abs(unlockedPoint.totalGain-20.01)<1e-6);
+assert(Math.abs(unlockedPoint.totalGain-20)<1e-6);
 for(const cap of [1,20,79.5,80,94,100]) {
   const result=calculate(model,{remaining:cap,days:14});
   const marginal=result.marginal;
@@ -81,12 +82,19 @@ for(const cap of [1,20,79.5,80,94,100]) {
   }
   assert.equal(marginal.before.total,result.optimal.served);
 }
-// The last nonnegative point is refined beyond the coarse scan, with one grid.
-const partial=calculate(allowance,{days:1,remaining:19.43});
-assert.equal(partial.marginal.limit,'futureZero');
-assert(Math.abs(partial.marginal.maxUsage-18.43)<.001);
-assert(Math.abs(partial.marginal.points.at(-1).futureGain)<1e-6);
-console.log('Passed: net-return curves ending at zero future change, fixed future demand, no double count, zero-gain plateaus, sub-one-percent quota, strict deadline unlock, and shared-candidate monotonicity.');
+// Before the terminal 1:1 tail, a zero-net-gain interval belongs on the plot.
+const transitionModel={...allowance,hourlyRates:Array.from({length:7},()=>Array(8).fill(25/24)),dailyRates:Array(7).fill(25),
+  account:{capturedAt:start,remaining:50,nextRefresh:start+4*24*HOUR,expiries:[start+HOUR]}};
+const split=calculate(transitionModel,{days:14}).marginal;
+assert.equal(split.limit,'linearTail');
+assert(Math.abs(split.maxUsage-25)<1e-6);
+assert(Math.abs(split.points.find(p=>p.usage===5).futureGain+5)<1e-6);
+assert(Math.abs(split.points.at(-1).futureGain+25)<1e-6);
+assert(Math.abs(split.fullBalance.totalGain-25)<1e-6);
+const allSpare=calculate(allowance,{strength:0,remaining:10}).marginal;
+assert.equal(allSpare.maxUsage,0);
+assert.equal(allSpare.fullBalance.totalGain,10);
+console.log('Passed: terminal unit-slope cutoffs, zero-net displacement, full-balance limits, and reset eligibility.');
 
 const anchor=4*24*HOUR-8*HOUR; // Beijing Monday 1970-01-05.
 const fortnight={cycleDays:14,slotHours:3,hourlyRates:Array.from({length:14},(_,day)=>Array(8).fill((day+1)/24))};

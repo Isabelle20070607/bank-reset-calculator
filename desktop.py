@@ -343,8 +343,9 @@ class Window(QMainWindow):
 
     def update_marginal(self, marginal, waiting='等待有效用量'):
         self.marginal_period.setText('未来 '+str(self.days.currentData())+' 天 · 额外用量与累计净收益')
-        has_curve = bool(marginal and marginal['available'] and
-                         any(points(sample['totalGain']) != '0' for sample in marginal['points']))
+        has_curve = bool(marginal and marginal['available'] and marginal['maxUsage'] > 0 and
+                         (marginal['limit'] == 'linearTail' or
+                          any(points(abs(sample['totalGain'])) != '0' for sample in marginal['points'])))
         if has_curve:
             self.comparison.setText('现在额外使用 0–'+points(marginal['maxUsage'])+'% 周限额的净收益曲线，见「工作收益」。')
         self.marginal_details.setVisible(has_curve)
@@ -355,23 +356,27 @@ class Window(QMainWindow):
             self.marginal_note.setText('取得足够的用量记录和有效账户状态后自动计算。' if marginal is None else '额度刷新后，会自动恢复曲线。')
             self.marginal_table.setRowCount(0)
         elif not has_curve:
-            if marginal['maxUsage'] == 0:
-                title = '现在多用，预计会减少后续可用量'
-                note = '曲线画到后续可用量变化归零为止，这次只剩额外用量为 0% 的起点。'
-            else:
-                title = '图示范围内的净收益约为 0%'
-                note = '本次估算的额外用量范围为 0–'+points(marginal['maxUsage'])+'% 周限额。'
+            example = marginal['fullBalance']
+            days = self.days.currentData()
+            gain = example['totalGain']
+            change = example['futureGain']
+            title = f'预计 {days} 天总用量持平' if points(abs(gain)) == '0' else (
+                f'预计 {days} 天合计'+('多用 ' if gain > 0 else '少用 ')+points(abs(gain))+'% 周额度')
+            future = '之后用量持平' if points(abs(change)) == '0' else (
+                '之后'+('多用 ' if change > 0 else '少用 ')+points(abs(change))+'%')
+            note = '如果现在用完余额：现在多用 '+points(example['usage'])+'%，'+future+'。百分比均按一周满额计算。'
             self.marginal_value.setText(title)
             self.marginal_note.setText(note)
-            self.comparison.setText(title+'。')
+            self.comparison.setText('如果现在用完余额，'+title+'。')
             self.marginal_table.setRowCount(0)
 
     def show_marginal_point(self, sample):
         self.marginal_value.setText('净收益 '+points(sample['totalGain'], True)+'% 周限额')
-        self.marginal_note.setText('选中额外用量 '+points(sample['usage'])+'% · 后续可用量变化 '+
-                                   points(sample['futureGain'], True)+'% · 移动鼠标或按左右键切换选点'
-                                   if self.marginal_chart.curve['maxUsage'] else
-                                   '额外用量会减少后续可用量，显示范围止于 0%。')
+        curve = self.marginal_chart.curve
+        note = '现在多用 '+points(sample['usage'])+'%，后续可用量变化 '+points(sample['futureGain'], True)+'%。'
+        if curve['limit'] == 'linearTail':
+            note += '超过 '+points(curve['maxUsage'])+'% 后，每再多用 1% 周额度，期内总用量也多 1% 周额度。'
+        self.marginal_note.setText(note)
         before, after = self.marginal_chart.curve['before'], sample['after']
         reset_date = lambda value: date(value) if value is not None else '不需要'
         quantity = lambda value: f'{value/100:.4f}'.rstrip('0').rstrip('.')
