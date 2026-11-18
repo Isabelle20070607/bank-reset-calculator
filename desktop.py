@@ -122,7 +122,6 @@ class Window(QMainWindow):
         self.last_payload = None
         self.normal_cycle_days = 7
         build_interface(self)
-        self.marginal_chart.point_selected.connect(self.show_marginal_point)
 
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -242,7 +241,6 @@ class Window(QMainWindow):
         self.save_preferences()
         self.first.setText('正在重算…')
         self.update_totals(None)
-        self.update_marginal(None, '正在重算…')
         self.request()
 
     def request(self, refresh=False):
@@ -306,14 +304,8 @@ class Window(QMainWindow):
             self.forecast_chart.set_result(None)
             self.gain.setText('—')
             self.met.setText('—')
-            self.comparison.clear()
             self.naturals.clear()
             self.plan.setRowCount(0)
-            waiting = '等待有效用量'
-            if state.get('modelError'):
-                waiting = '正在积累假期样本' if self.usage_mode.currentData() == 'holiday' else (
-                    '双周样本尚未补齐' if self.normal_cycle_days == 14 else '常规样本尚未补齐')
-            self.update_marginal(None, waiting)
             return
         first = result['optimal']['schedule'][0] if result['optimal']['schedule'] else None
         self.first.setText(date(first['time']) if first else '暂不需要')
@@ -323,8 +315,6 @@ class Window(QMainWindow):
         met = 100*result['optimal']['served']/result['demand'] if result['demand'] else 100
         baseline = 100*result['baseline']/result['demand'] if result['demand'] else 100
         self.met.setText('需求覆盖 '+number(met)+'%；不重置 '+number(baseline)+'%')
-        marginal = result['marginal']
-        self.update_marginal(marginal)
         fill_table(self.plan, [[date(step['time']), number(step['before'])+'%', date(step['expiry'])] for step in result['optimal']['schedule']])
         natural = [date(e['time']) for e in result['events'] if e['type'] == 'natural']
         self.naturals.setText('本方案期内自然刷新：'+('、'.join(natural) if natural else '无'))
@@ -341,57 +331,11 @@ class Window(QMainWindow):
         self.regular_total.setText(number(regular)+' 份')
         self.allowance_surplus.setText(points(total-regular, signed=True)+' 份')
 
-    def update_marginal(self, marginal, waiting='等待有效用量'):
-        self.marginal_period.setText('未来 '+str(self.days.currentData())+' 天 · 额外用量与累计净收益')
-        has_curve = bool(marginal and marginal['available'] and marginal['maxUsage'] > 0 and
-                         (marginal['limit'] == 'linearTail' or
-                          any(points(abs(sample['totalGain'])) != '0' for sample in marginal['points'])))
-        if has_curve:
-            self.comparison.setText('现在额外使用 0–'+points(marginal['maxUsage'])+'% 周限额的净收益曲线，见「工作收益」。')
-        self.marginal_details.setVisible(has_curve)
-        self.marginal_chart.set_curve(marginal if has_curve else None)
-        if not marginal or not marginal['available']:
-            self.comparison.setText('当前周额度已耗尽，额度刷新后更新收益曲线。' if marginal else '')
-            self.marginal_value.setText(waiting if marginal is None else '当前额度已耗尽')
-            self.marginal_note.setText('取得足够的用量记录和有效账户状态后自动计算。' if marginal is None else '额度刷新后，会自动恢复曲线。')
-            self.marginal_table.setRowCount(0)
-        elif not has_curve:
-            example = marginal['fullBalance']
-            days = self.days.currentData()
-            gain = example['totalGain']
-            change = example['futureGain']
-            title = f'预计 {days} 天总用量持平' if points(abs(gain)) == '0' else (
-                f'预计 {days} 天合计'+('多用 ' if gain > 0 else '少用 ')+points(abs(gain))+'% 周额度')
-            future = '之后用量持平' if points(abs(change)) == '0' else (
-                '之后'+('多用 ' if change > 0 else '少用 ')+points(abs(change))+'%')
-            note = '如果现在用完余额：现在多用 '+points(example['usage'])+'%，'+future+'。百分比均按一周满额计算。'
-            self.marginal_value.setText(title)
-            self.marginal_note.setText(note)
-            self.comparison.setText('如果现在用完余额，'+title+'。')
-            self.marginal_table.setRowCount(0)
-
-    def show_marginal_point(self, sample):
-        self.marginal_value.setText('净收益 '+points(sample['totalGain'], True)+'% 周限额')
-        curve = self.marginal_chart.curve
-        note = '现在多用 '+points(sample['usage'])+'%，后续可用量变化 '+points(sample['futureGain'], True)+'%。'
-        if curve['limit'] == 'linearTail':
-            note += '超过 '+points(curve['maxUsage'])+'% 后，每再多用 1% 周额度，期内总用量也多 1% 周额度。'
-        self.marginal_note.setText(note)
-        before, after = self.marginal_chart.curve['before'], sample['after']
-        reset_date = lambda value: date(value) if value is not None else '不需要'
-        quantity = lambda value: f'{value/100:.4f}'.rstrip('0').rstrip('.')
-        fill_table(self.marginal_table, [
-            ['累计（份）', quantity(before['total']), quantity(after['total'])],
-            ['使用重置', str(before['count'])+' 次', str(after['count'])+' 次'],
-            ['首次重置', reset_date(before['firstReset']), reset_date(after['firstReset'])],
-        ])
-
     def show_failure(self, message):
         self.error.setText(message)
         self.error.show()
         self.status.setText('采集已停止，请重新打开计算器。')
         self.update_totals(None)
-        self.update_marginal(None, '采集已停止')
 
     def show_window(self):
         if self.closing:

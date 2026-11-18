@@ -35,16 +35,6 @@ def check(report_path):
     if abs(result['baseline']-50) > 1e-6 or abs(result['now']['served']-100) > 1e-6:
         raise RuntimeError('Release optimizer returned an unexpected result.')
     window.forecast_chart.set_result(result)
-    work_model = {'cycleDays': 7, 'slotHours': 3, 'hourlyRates': [[1/24]*8 for _ in range(7)],
-                  'dailyRates': [1]*7, 'account': {'capturedAt': start,
-                  'remaining': 50, 'nextRefresh': start+7*86400, 'expiries': []}}
-    marginal = calculator.optimize(work_model, days=1)['marginal']
-    if (not marginal['available'] or marginal['points'][0]['usage'] != 0 or
-            abs(marginal['points'][-1]['usage']-50) > .001 or
-            abs(marginal['points'][1]['totalGain']-marginal['points'][1]['usage']) > 1e-6):
-        raise RuntimeError('Release net-return curve is incorrect.')
-    window.marginal_chart.set_curve(marginal)
-    window.marginal_details.show()
     window.weekly_chart.set_profiles([{'index': day, 'label': '周'+'一二三四五六日'[day], 'rate': 10+day}
                                      for day in range(7)])
     window.resize(930, 790)
@@ -52,10 +42,14 @@ def check(report_path):
     app.processEvents()
     if window.grab().isNull():
         raise RuntimeError('Release window could not render.')
-    window.tabs.setCurrentIndex(1)
-    app.processEvents()
-    if window.grab().isNull():
-        raise RuntimeError('Release work-return chart could not render.')
+    expected = ['重置建议', '用量习惯', '观测记录']
+    if [window.tabs.tabText(i) for i in range(window.tabs.count())] != expected:
+        raise RuntimeError('Unexpected desktop tabs.')
+    for index in range(1, window.tabs.count()):
+        window.tabs.setCurrentIndex(index)
+        app.processEvents()
+        if window.grab().isNull():
+            raise RuntimeError('Release tab could not render.')
     with tempfile.TemporaryDirectory() as folder:
         with sqlite3.connect(Path(folder)/'check.sqlite3') as database:
             database.execute('create table check_runtime (value integer)')
@@ -65,5 +59,5 @@ def check(report_path):
         database.close()
     window.close()
     Path(report_path).write_text(json.dumps({'ok': True, 'qt': True, 'sqlite': True,
-        'optimizer': True, 'marginal': True, 'strengthButtons': True,
+        'optimizer': True, 'tabs': True, 'strengthButtons': True,
         'node': calculator.node}, indent=2), encoding='utf-8')

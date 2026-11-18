@@ -1,4 +1,4 @@
-"""Native totals and work-return states use synthetic data and no account integration."""
+"""Native planning and account states use synthetic data and no account integration."""
 import copy
 import json
 import os
@@ -28,7 +28,7 @@ class IdleCollector(QObject):
     def isRunning(self): return False
 
 
-class WorkReturnTests(unittest.TestCase):
+class DesktopTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -63,33 +63,6 @@ class WorkReturnTests(unittest.TestCase):
         self.window.close()
         self.window.deleteLater()
 
-    def test_curve_mouse_and_keyboard_selection_update_net_return_and_totals(self):
-        self.window.tabs.setCurrentIndex(1)
-        self.window.show()
-        self.app.processEvents()
-        chart = self.window.marginal_chart
-        self.assertIn('0–50%', self.window.comparison.text())
-        self.assertEqual(chart.curve['points'][0]['usage'], 0)
-        self.assertAlmostEqual(chart.curve['points'][-1]['usage'], 50, places=2)
-        plot = chart.plot_rect()
-        target = plot.center()
-        target.setX(plot.right()-1)
-        QTest.mouseClick(chart, Qt.MouseButton.LeftButton, pos=target.toPoint())
-        self.assertAlmostEqual(chart.selected_usage, 50, places=2)
-        self.assertEqual(self.window.marginal_value.text(), '净收益 +43% 周限额')
-        self.assertEqual(self.window.marginal_table.item(0, 1).text(), '0.28')
-        self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.71')
-        self.assertAlmostEqual(chart.curve['points'][-1]['futureGain'], -7)
-        QTest.keyClick(chart, Qt.Key.Key_Home)
-        self.assertEqual(chart.selected_usage, 0)
-        self.assertEqual(self.window.marginal_value.text(), '净收益 0% 周限额')
-        self.assertFalse(self.window.marginal_details.isHidden())
-        self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.28')
-        QTest.keyClick(chart, Qt.Key.Key_Right)
-        self.assertAlmostEqual(chart.selected_usage, 2.5, places=2)
-        self.assertEqual(self.window.marginal_value.text(), '净收益 +2.5% 周限额')
-        self.assertEqual(self.window.marginal_table.item(0, 2).text(), '0.305')
-
     def test_totals_subtract_one_full_allowance_per_week(self):
         for index, days, total, surplus in [(0, 14, '0.14', '-1.86'),
                                             (1, 28, '0.28', '-3.72'),
@@ -123,10 +96,9 @@ class WorkReturnTests(unittest.TestCase):
         self.assertEqual(self.window.period_total.text(), '—')
         self.assertEqual(self.window.regular_total.text(), '—')
         self.assertEqual(self.window.allowance_surplus.text(), '—')
-        self.assertEqual(self.window.marginal_value.text(), '正在重算…')
-        self.assertIsNone(self.window.marginal_chart.curve)
+        self.assertEqual(self.window.first.text(), '正在重算…')
         self.window.update_state(copy.deepcopy(self.payload))
-        self.assertEqual(self.window.marginal_value.text(), '正在重算…')
+        self.assertEqual(self.window.first.text(), '正在重算…')
         self.assertEqual(self.window.allowance_surplus.text(), '—')
         offline = copy.deepcopy(self.payload)
         offline['settings'] = [42, 1, dict(desktop.DEFAULT_FIT)]
@@ -134,9 +106,6 @@ class WorkReturnTests(unittest.TestCase):
         offline['state']['accountFresh'] = False
         offline['state']['accountError'] = 'connection lost'
         self.window.update_state(offline)
-        self.assertIsNone(self.window.marginal_chart.curve)
-        self.assertEqual(self.window.marginal_table.rowCount(), 0)
-        self.assertEqual(self.window.comparison.text(), '')
         self.assertEqual(self.window.period_total.text(), '—')
         self.assertEqual(self.window.regular_total.text(), '—')
         self.assertEqual(self.window.allowance_surplus.text(), '—')
@@ -147,51 +116,6 @@ class WorkReturnTests(unittest.TestCase):
         self.assertEqual(self.window.regular_total.text(), '—')
         self.assertEqual(self.window.allowance_surplus.text(), '—')
 
-    def test_no_visible_gain_hides_details_and_recovers_with_new_results(self):
-        payload = copy.deepcopy(self.payload)
-        payload['state']['model']['account']['remaining'] = .5
-        payload['result'] = Calculator().optimize(payload['state']['model'])
-        self.window.update_state(payload)
-        self.assertTrue(payload['result']['marginal']['available'])
-        self.assertTrue(self.window.marginal_details.isHidden())
-        self.assertIsNone(self.window.marginal_chart.curve)
-        self.assertEqual(self.window.marginal_value.text(), '预计 28 天总用量持平')
-        self.assertIn('现在多用 0.5%，之后少用 0.5%', self.window.marginal_note.text())
-        self.assertIn('如果现在用完余额', self.window.comparison.text())
-        self.assertEqual(self.window.marginal_table.rowCount(), 0)
-        self.assertNotIn('切换选点', self.window.marginal_note.text())
-        self.window.update_state(copy.deepcopy(self.payload))
-        self.assertFalse(self.window.marginal_details.isHidden())
-        self.assertIsNotNone(self.window.marginal_chart.curve)
-        self.assertEqual(self.window.marginal_table.rowCount(), 3)
-
-    def test_break_even_range_is_visible_until_extra_usage_no_longer_displaces_future_usage(self):
-        self.window.days.setCurrentIndex(0)
-        payload = copy.deepcopy(self.payload)
-        model = payload['state']['model']
-        start = model['account']['capturedAt']
-        model['hourlyRates'] = [[25/24]*8 for _ in range(7)]
-        model['dailyRates'] = [25]*7
-        model['account'].update(nextRefresh=start+4*86400, expiries=[start+3600], availableCount=1)
-        payload['settings'][0] = 14
-        payload['result'] = Calculator().optimize(model, 14)
-        self.window.update_state(payload)
-        curve = self.window.marginal_chart.curve
-        self.assertFalse(self.window.marginal_details.isHidden())
-        self.assertAlmostEqual(curve['maxUsage'], 25, places=5)
-        self.assertEqual(self.window.marginal_value.text(), '净收益 0% 周限额')
-        self.assertIn('超过 25% 后', self.window.marginal_note.text())
-        self.assertEqual(curve['fullBalance']['totalGain'], 25)
-
-    def test_empty_quota_shows_unavailable_instead_of_old_curve(self):
-        payload = copy.deepcopy(self.payload)
-        payload['result']['marginal'] = {'available': False, 'maxUsage': 0, 'points': [], 'reason': 'insufficientQuota'}
-        self.window.update_state(payload)
-        self.assertEqual(self.window.marginal_value.text(), '当前额度已耗尽')
-        self.assertEqual(self.window.marginal_table.rowCount(), 0)
-        self.assertIsNone(self.window.marginal_chart.curve)
-        self.assertTrue(self.window.marginal_details.isHidden())
-
     def test_strength_buttons_accept_mouse_clicks_and_update_preferences(self):
         self.window.show()
         self.app.processEvents()
@@ -199,7 +123,7 @@ class WorkReturnTests(unittest.TestCase):
         self.assertAlmostEqual(self.window.strength.value(),1.05)
         settings=json.loads((Path(self.folder.name)/'preferences.json').read_text(encoding='utf-8'))
         self.assertAlmostEqual(settings['strength'],1.05)
-        self.assertEqual(self.window.marginal_value.text(),'正在重算…')
+        self.assertEqual(self.window.first.text(),'正在重算…')
         self.assertEqual(self.window.allowance_surplus.text(), '—')
         QTest.mouseClick(self.window.decrease_strength, Qt.MouseButton.LeftButton)
         self.assertAlmostEqual(self.window.strength.value(),1)

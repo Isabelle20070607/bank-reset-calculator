@@ -74,17 +74,6 @@ def main():
         target.parent.mkdir(exist_ok=True)
         if not window.grab().save(str(target)):
             raise RuntimeError('Could not save README preview.')
-        # Use a balance that shows the transition to a one-for-one net gain.
-        work_account = dict(account, remaining=52)
-        work_model = dict(model, account=work_account)
-        window.update_state({'state': dict(state, account=work_account, model=work_model),
-                             'result': Calculator().optimize(work_model), 'error': None,
-                             'settings': [28, 1, window.fit_options()]})
-        window.status.setText('虚构示例数据 · 实际使用时每 30 秒自动更新')
-        window.tabs.setCurrentIndex(1)
-        app.processEvents()
-        if not window.grab().save(str(ROOT/'docs'/'work-return.png')):
-            raise RuntimeError('Could not save work-return preview.')
         window.usage_mode.setCurrentIndex(window.usage_mode.findData('holiday'))
         window.auto_return.setChecked(True)
         hourly = [.02]*8+[.12]*10+[.25]*6
@@ -96,7 +85,7 @@ def main():
         window.update_state({'state': dict(state, model=holiday),
                              'result': Calculator().optimize(holiday), 'error': None,
                              'settings': [28, 1, window.fit_options()]})
-        window.tabs.setCurrentIndex(2)
+        window.tabs.setCurrentIndex(1)
         app.processEvents()
         if not window.grab().save(str(ROOT/'docs'/'holiday-mode.png')):
             raise RuntimeError('Could not save holiday-mode preview.')

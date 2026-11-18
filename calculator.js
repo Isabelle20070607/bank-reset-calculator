@@ -155,7 +155,7 @@
     }
 
     const optimal = solve(false);
-    const now = options.skipNow ? null : solve(true);
+    const now = solve(true);
     const baseline = segment(start, end, remaining, refresh, demand);
 
     function trace(schedule, until = end) {
@@ -187,7 +187,7 @@
     const refresh = options.refresh ?? model.account.nextRefresh;
     const usages = remaining > EPS ? Array.from({length: 21}, (_, i) => remaining*i/20) : [];
     if (remaining >= 80 && (options.expiries ?? model.account.expiries).some(expiry => expiry > start)) {
-      // Show both sides of the strict reset-eligibility boundary.
+      // Include depletion times on both sides of the reset-eligibility boundary.
       usages.push(remaining-80, Math.min(remaining, remaining-80+.01));
     }
     const demand = demandCurve(model, start, end, options.strength ?? 1);
@@ -197,76 +197,12 @@
     const samples = [...new Set(usages)].sort((a,b) => a-b);
     const comparable = Object.assign({}, options);
     if (samples.length) {
-      // Every point, including the unchanged plan, uses the same search times.
+      // Retain the finer first-window grid used for the recommended schedule.
       comparable.candidateTimes = (options.candidateTimes ?? []).concat(
         samples.map(used => demand.reaches(start, until, remaining-used)));
-      // Compare every extra-usage scenario on the same reset grid.
       comparable.sharedCandidates = true;
     }
-    const result = optimize(model, comparable);
-    if (!samples.length) {
-      result.marginal = { available: false, maxUsage: 0, points: [], reason: 'insufficientQuota' };
-      return result;
-    }
-    function summary(plan, usedNow) {
-      return { future: plan.served, total: plan.served+usedNow, count: plan.count,
-        firstReset: plan.schedule.length ? plan.schedule[0].time : null };
-    }
-    const before = summary(result.optimal, 0);
-    function score(usage) {
-      const plan = usage === 0 ? result : optimize(model, Object.assign({}, comparable,
-        { remaining: remaining-usage, skipNow: true }));
-      const futureGain = plan.optimal.served-before.future;
-      return { usage, after: summary(plan.optimal, usage), futureGain, totalGain: usage+futureGain };
-    }
-    let points = samples.map(score);
-    const fullBalance = points[points.length-1];
-    // Find the start of the final interval with constant future usage.
-    // Between first-reset eligibility changes, every feasible schedule's
-    // future usage is nonincreasing as more balance is spent now.
-    const probes = new Set(samples);
-    if (remaining >= 80 && result.expiries.length) {
-      const lastReset = result.expiries[result.expiries.length-1]-HOUR;
-      for (const time of resetTimes(start, end, result.expiries, comparable, null)) {
-        if (time >= refresh-EPS || time > lastReset+EPS) break;
-        const gate = remaining-demand.at(time)-80+EPS;
-        if (gate >= 0 && gate < remaining) {
-          probes.add(Math.max(0, gate-EPS));
-          probes.add(Math.min(remaining, gate+EPS));
-        }
-      }
-    }
-    const known = new Map(points.map(p => [p.usage, p]));
-    const at = x => {
-      if (!known.has(x)) known.set(x, score(x));
-      return known.get(x);
-    };
-    const onTail = x => Math.abs(at(x).futureGain-fullBalance.futureGain) <= EPS;
-    let endpoint = remaining;
-    for (const x of [...probes].sort((a,b) => b-a)) {
-      if (onTail(x)) {
-        endpoint = x;
-        continue;
-      }
-      let low = x;
-      while (endpoint-low > EPS/4) {
-        const mid = (low+endpoint)/2;
-        if (onTail(mid)) endpoint = mid; else low = mid;
-      }
-      break;
-    }
-    // A boundary within the numeric resolution of the balance is the balance.
-    if (remaining-endpoint < .001 && endpoint > 0) endpoint = remaining;
-    const limit = endpoint < remaining ? 'linearTail' : 'quota';
-    if (limit === 'linearTail') {
-      const visible = new Set(points.filter(p => p.usage <= endpoint).map(p => p.usage));
-      visible.add(endpoint);
-      for (let i = 1; i < 20; i++) visible.add(endpoint*i/20);
-      points = [...visible].sort((a,b) => a-b).map(at);
-    }
-    result.marginal = { available: true, availableUsage: remaining,
-      maxUsage: points[points.length-1].usage, limit, before, fullBalance, points };
-    return result;
+    return optimize(model, comparable);
   }
   scope.BankResetCore = { demandCurve, segment, optimize, calculate, HOUR, WEEK };
 })(typeof globalThis === 'undefined' ? this : globalThis);
